@@ -39,6 +39,9 @@ const BODY_CROSSING_EFFECT_COOLDOWN_MS = 260;
 const ALWAYS_MOVE_SNAKE_IDS = new Set(["speedster", "handler"]);
 const ALWAYS_MOVE_MIN_SPEED = 34;
 const ALWAYS_MOVE_OFFROAD_FACTOR = 0.72;
+const TRACK_MUSIC = {
+  canyon_loop: { key: "music_formula1", path: "assets/sounds/Formula1.mp3", volume: 0.34 },
+};
 
 const BODY_ITEMS = {
   APPLE: { color: "#ff5f6a", deltaSegments: 1 },
@@ -261,12 +264,16 @@ function initPhaser() {
       this.spriteSupportMap = new Map();
       this.headSpriteMap = new Map();
       this.segmentSpriteMap = new Map();
+      this.trackMusicMap = new Map();
     }
 
     preload() {
       for (const snake of SNAKES) {
         this.load.image(snakeHeadTextureKey(snake.id), snakeHeadTexturePath(snake.id));
         this.load.image(snakeSegmentTextureKey(snake.id), snakeSegmentTexturePath(snake.id));
+      }
+      for (const musicCfg of Object.values(TRACK_MUSIC)) {
+        this.load.audio(musicCfg.key, musicCfg.path);
       }
     }
 
@@ -287,7 +294,16 @@ function initPhaser() {
         });
       }
 
+      for (const [trackId, musicCfg] of Object.entries(TRACK_MUSIC)) {
+        if (!this.cache.audio.exists(musicCfg.key)) {
+          continue;
+        }
+        const trackMusic = this.sound.add(musicCfg.key, { loop: true, volume: musicCfg.volume });
+        this.trackMusicMap.set(trackId, trackMusic);
+      }
+
       state.raceScene = this;
+      syncRaceMusic();
     }
 
     update(time, delta) {
@@ -399,6 +415,7 @@ function showScreen(name) {
       }
     }, 0);
   }
+  syncRaceMusic();
 }
 
 function renderSnakeCards() {
@@ -477,6 +494,7 @@ function startRace(trackId) {
   const selectedSnake = SNAKES.find((item) => item.id === state.selectedSnakeId) || SNAKES[0];
   state.race = createRaceState(trackDef, selectedSnake, debugMode);
   showScreen("race");
+  syncRaceMusic();
   if (debugMode) {
     showToast("DEBUG: 4 NPC автопилот. Быстрая отладка симуляции.");
   } else {
@@ -1912,6 +1930,32 @@ function showToast(text) {
     clearTimeout(state.toastTimeout);
   }
   state.toastTimeout = setTimeout(() => ui.toast.classList.remove("show"), 1900);
+}
+
+function syncRaceMusic() {
+  const scene = state.raceScene;
+  if (!scene || !scene.trackMusicMap || !scene.trackMusicMap.size) {
+    return;
+  }
+  const activeTrackId = state.currentScreen === "race" && state.race?.trackDef?.id ? state.race.trackDef.id : null;
+
+  scene.trackMusicMap.forEach((music, trackId) => {
+    if (!music) {
+      return;
+    }
+    const shouldPlay = activeTrackId === trackId;
+    if (shouldPlay) {
+      if (!music.isPlaying) {
+        try {
+          music.play();
+        } catch (error) {
+          console.warn("[audio] track music play failed:", error);
+        }
+      }
+    } else if (music.isPlaying) {
+      music.stop();
+    }
+  });
 }
 
 function clamp(value, min, max) {
