@@ -75,6 +75,9 @@
 - `match-server` — Colyseus authoritative match-server.
 - `nakama` — backend для leaderboard/RPC.
 - `postgres` — база данных Nakama.
+- Поток результатов: `match-server -> nakama RPC submit_race_time -> leaderboard`.
+- Для офлайн `userId` match-server генерирует детерминированный `owner_id` (UUID), чтобы Nakama корректно записывал результаты.
+- `postgres` работает только во внутренней сети `docker-compose` (порт наружу не пробрасывается).
 
 ## Запуск через Docker (рекомендуется)
 
@@ -96,6 +99,7 @@ docker compose up --build
 - Match-server health: `http://localhost:2567/healthz`
 - Nakama API: `http://localhost:7350`
 - Nakama Console: `http://localhost:7351`
+- Логин в Nakama Console: из `.env` (`NAKAMA_ADMIN_USER` / `NAKAMA_ADMIN_PASSWORD`)
 
 4. Остановить стек:
 
@@ -109,9 +113,9 @@ docker compose down
 docker compose down -v
 ```
 
-## Как запустить
+## Локальный запуск без Docker (опционально)
 
-Рекомендуемый запуск — через локальный HTTP-сервер (так надежнее грузятся ассеты и спрайты).
+Этот режим нужен только для быстрого офлайн-прогона фронтенда без серверной части.
 
 1. Открыть терминал в корне проекта (`.../_hackathon`).
 2. Запустить сервер одним из способов:

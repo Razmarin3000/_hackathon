@@ -27,14 +27,16 @@ end
 
 local function rpc_submit_race_time(_context, payload)
   local data = nk.json_decode(payload or "{}")
-  local user_id = data.user_id
+  local owner_id = data.owner_id or data.user_id
+  local user_id = data.user_id or owner_id
+  local username = data.username or data.player_name or user_id
   local track_id = data.track_id
   local score = tonumber(data.score)
   local leaderboard_id = data.leaderboard_id
   local metadata = data.metadata or {}
 
-  if user_id == nil or tostring(user_id) == "" then
-    error("user_id is required")
+  if owner_id == nil or tostring(owner_id) == "" then
+    error("owner_id is required")
   end
 
   if score == nil then
@@ -50,7 +52,8 @@ local function rpc_submit_race_time(_context, payload)
 
   nk.leaderboard_record_write(
     tostring(leaderboard_id),
-    tostring(user_id),
+    tostring(owner_id),
+    tostring(username),
     math.floor(score),
     tonumber(data.subscore) or 0,
     metadata
@@ -59,15 +62,18 @@ local function rpc_submit_race_time(_context, payload)
   return nk.json_encode({
     ok = true,
     leaderboard_id = tostring(leaderboard_id),
+    owner_id = tostring(owner_id),
     user_id = tostring(user_id),
+    username = tostring(username),
     score = math.floor(score)
   })
 end
 
-local function init_module(_ctx, logger, _nk, _initializer)
-  ensure_leaderboards()
-  nk.register_rpc(rpc_submit_race_time, "submit_race_time")
-  logger.info("Nakama runtime module initialized: submit_race_time RPC registered.")
+nk.register_rpc(rpc_submit_race_time, "submit_race_time")
+
+local ok, err = pcall(ensure_leaderboards)
+if not ok then
+  nk.logger_warn("Leaderboard bootstrap failed: " .. tostring(err))
 end
 
-return init_module
+nk.logger_info("Nakama runtime module loaded: submit_race_time RPC registered.")
