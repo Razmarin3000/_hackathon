@@ -298,7 +298,8 @@ function initPhaser() {
         if (!this.cache.audio.exists(musicCfg.key)) {
           continue;
         }
-        const trackMusic = this.sound.add(musicCfg.key, { loop: true, volume: musicCfg.volume });
+        const trackMusic = this.sound.add(musicCfg.key, { volume: musicCfg.volume });
+        trackMusic.setLoop(true);
         this.trackMusicMap.set(trackId, trackMusic);
       }
 
@@ -1945,9 +1946,13 @@ function syncRaceMusic() {
     }
     const shouldPlay = activeTrackId === trackId;
     if (shouldPlay) {
+      if (!music.loop) {
+        music.setLoop(true);
+      }
       if (!music.isPlaying) {
         try {
-          music.play();
+          const cfg = TRACK_MUSIC[trackId];
+          music.play({ loop: true, volume: cfg?.volume ?? music.volume ?? 1 });
         } catch (error) {
           console.warn("[audio] track music play failed:", error);
         }
