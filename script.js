@@ -17,10 +17,25 @@ const OFFROAD_EXTRA_SLOWDOWN = 0.84;
 const MAX_HISTORY_POINTS = 320;
 const BODY_ITEM_COUNT = 12;
 const BODY_ITEM_RESPAWN_MS = 3600;
+const START_BODY_SEGMENTS = 8;
+const MIN_BODY_SEGMENTS = 1;
+const MAX_BODY_SEGMENTS = 56;
+const STARVATION_DECAY_INTERVAL_MS = 3000;
+const STARVATION_DECAY_SEGMENTS = 1;
+const EXHAUSTION_LIMIT = 3;
+const CRITICAL_SEGMENTS_THRESHOLD = 4;
+const CRITICAL_SEGMENTS_SLOWDOWN = 0.32;
+const BODY_ITEM_MIN_SEPARATION = 64;
+const BODY_ITEM_TO_CHECKPOINT_MIN_DIST = 62;
+const BODY_ITEM_TO_PICKUP_MIN_DIST = 40;
+const CROSS_ACCEL_SNAKE_ID = "handler";
+const BODY_CROSS_SLOWDOWN_MUL = 0.78;
+const SPEEDSTER_BODY_BLOCK_PUSH = 8;
+const BULLY_PUSH_DISTANCE = 8;
 
 const BODY_ITEMS = {
-  APPLE: { color: "#ff5f6a", deltaSegments: 2 },
-  CACTUS: { color: "#4fd17b", deltaSegments: -2 },
+  APPLE: { color: "#ff5f6a", deltaSegments: 1 },
+  CACTUS: { color: "#4fd17b", deltaSegments: -1 },
 };
 const SNAKE_SPRITES_BASE_PATH = "assets/sprites/snakes";
 
@@ -477,7 +492,7 @@ function createRaceState(trackDef, selectedSnake, debugMode) {
       color: snake.color,
       stats: snake.stats,
       bodyConfig: snake.body,
-      baseBodySegments: snake.body.segments,
+      baseBodySegments: START_BODY_SEGMENTS,
       lengthBonusSegments: 0,
       profile,
       isPlayer: !debugMode && i === 0,
@@ -501,17 +516,24 @@ function createRaceState(trackDef, selectedSnake, debugMode) {
       bodyWaveSeed: Math.random() * TAU,
       lastProjection: null,
       impactUntilMs: 0,
+      exhaustionSteps: 0,
+      eliminationReason: null,
+      nextHungerTickMs: 0,
+      tailBiteCooldownUntilMs: 0,
     };
     initializeRacerBodyHistory(racer);
     racers.push(racer);
   }
 
+  const pickups = createPickups(track);
+  const bodyItems = createBodyItems(track, pickups);
+
   return {
     trackDef,
     track,
     racers,
-    pickups: createPickups(track),
-    bodyItems: createBodyItems(track),
+    pickups,
+    bodyItems,
     phase: "countdown",
     createdAtMs: performance.now(),
     countdownStartMs: performance.now(),
@@ -542,7 +564,7 @@ function createPickups(track) {
   });
 }
 
-function createBodyItems(track) {
+function createBodyItems(track, pickups) {
   const items = [];
   for (let i = 0; i < BODY_ITEM_COUNT; i += 1) {
     const item = {
@@ -554,22 +576,60 @@ function createBodyItems(track) {
       active: true,
       respawnAtMs: 0,
     };
-    randomizeBodyItemPosition(item, track);
+    randomizeBodyItemPosition(item, track, items, pickups);
     items.push(item);
   }
   return items;
 }
 
-function randomizeBodyItemPosition(item, track) {
-  const sample = sampleTrack(track, Math.random());
-  const side = Math.random() < 0.5 ? -1 : 1;
-  const lateral = side * (Math.random() * track.roadWidth * 0.45);
-  const normal = { x: -sample.tangent.y, y: sample.tangent.x };
-  item.x = sample.x + normal.x * lateral;
-  item.y = sample.y + normal.y * lateral;
+function randomizeBodyItemPosition(item, track, occupiedItems = [], pickups = []) {
+  let chosen = null;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const sample = sampleTrack(track, Math.random());
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const lateral = side * (Math.random() * track.roadWidth * 0.45);
+    const normal = { x: -sample.tangent.y, y: sample.tangent.x };
+    const x = sample.x + normal.x * lateral;
+    const y = sample.y + normal.y * lateral;
+    if (isBodyItemPositionValid(item, x, y, track, occupiedItems, pickups)) {
+      chosen = { x, y };
+      break;
+    }
+  }
+  if (!chosen) {
+    const sample = sampleTrack(track, Math.random());
+    const normal = { x: -sample.tangent.y, y: sample.tangent.x };
+    const side = Math.random() < 0.5 ? -1 : 1;
+    const lateral = side * (Math.random() * track.roadWidth * 0.45);
+    chosen = { x: sample.x + normal.x * lateral, y: sample.y + normal.y * lateral };
+  }
+  item.x = chosen.x;
+  item.y = chosen.y;
   if (Math.random() < 0.35) {
     item.type = item.type === "APPLE" ? "CACTUS" : "APPLE";
   }
+}
+
+function isBodyItemPositionValid(item, x, y, track, occupiedItems, pickups) {
+  for (const cp of track.checkpoints) {
+    if (sqrDistance(x, y, cp.x, cp.y) < BODY_ITEM_TO_CHECKPOINT_MIN_DIST ** 2) {
+      return false;
+    }
+  }
+  for (const pickup of pickups) {
+    if (sqrDistance(x, y, pickup.x, pickup.y) < BODY_ITEM_TO_PICKUP_MIN_DIST ** 2) {
+      return false;
+    }
+  }
+  for (const other of occupiedItems) {
+    if (!other || other.id === item.id || !other.active) {
+      continue;
+    }
+    if (sqrDistance(x, y, other.x, other.y) < BODY_ITEM_MIN_SEPARATION ** 2) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function initializeRacerBodyHistory(racer) {
@@ -593,6 +653,9 @@ function updateRace(race, nowMs, dt) {
       race.phase = "running";
       race.raceStartMs = nowMs;
       race.overlayUntilMs = nowMs + 700;
+      for (const racer of race.racers) {
+        racer.nextHungerTickMs = nowMs + STARVATION_DECAY_INTERVAL_MS;
+      }
       ui.overlay.textContent = "GO";
       ui.overlay.classList.add("visible");
     } else {
@@ -629,8 +692,16 @@ function updateRace(race, nowMs, dt) {
     if (racer.finished) {
       continue;
     }
+    updateRacerHunger(racer, nowMs);
+    if (racer.finished) {
+      continue;
+    }
     const control = racer.isPlayer ? readPlayerControl() : buildNpcControl(race, racer);
     stepRacer(race, racer, control, nowMs, dt);
+    applyBodyCrossingRules(race, racer, nowMs);
+    if (racer.finished) {
+      continue;
+    }
     updateCheckpointProgress(race, racer, nowMs);
     checkPickupCollection(race, racer, nowMs);
     checkBodyItemCollection(race, racer, nowMs);
@@ -716,8 +787,23 @@ function updateBodyItems(race, nowMs) {
   for (const item of race.bodyItems) {
     if (!item.active && nowMs >= item.respawnAtMs) {
       item.active = true;
-      randomizeBodyItemPosition(item, race.track);
+      randomizeBodyItemPosition(item, race.track, race.bodyItems, race.pickups);
     }
+  }
+}
+
+function updateRacerHunger(racer, nowMs) {
+  if (racer.finished) {
+    return;
+  }
+  if (!Number.isFinite(racer.nextHungerTickMs) || racer.nextHungerTickMs <= 0) {
+    racer.nextHungerTickMs = nowMs + STARVATION_DECAY_INTERVAL_MS;
+    return;
+  }
+
+  while (nowMs >= racer.nextHungerTickMs && !racer.finished) {
+    applyBodySegmentDelta(racer, -STARVATION_DECAY_SEGMENTS, nowMs, "STARVATION");
+    racer.nextHungerTickMs += STARVATION_DECAY_INTERVAL_MS;
   }
 }
 
@@ -747,15 +833,58 @@ function checkBodyItemCollection(race, racer, nowMs) {
     }
     item.active = false;
     item.respawnAtMs = nowMs + BODY_ITEM_RESPAWN_MS;
-    applyBodyItem(racer, item.type);
+    applyBodyItem(racer, item.type, nowMs);
   }
 }
 
-function applyBodyItem(racer, itemType) {
+function applyBodyItem(racer, itemType, nowMs) {
   const delta = BODY_ITEMS[itemType]?.deltaSegments ?? 0;
-  const minBonus = -Math.floor(racer.baseBodySegments * 0.45);
-  const maxBonus = Math.floor(racer.baseBodySegments * 1.2);
+  applyBodySegmentDelta(racer, delta, nowMs, itemType);
+  if (itemType === "APPLE") {
+    racer.nextHungerTickMs = nowMs + STARVATION_DECAY_INTERVAL_MS;
+  }
+}
+
+function getCurrentBodySegments(racer) {
+  return clamp(racer.baseBodySegments + racer.lengthBonusSegments, MIN_BODY_SEGMENTS, MAX_BODY_SEGMENTS);
+}
+
+function applyBodySegmentDelta(racer, delta, nowMs, source = "UNKNOWN") {
+  if (!Number.isFinite(delta) || delta === 0 || racer.finished) {
+    return false;
+  }
+
+  const before = getCurrentBodySegments(racer);
+  const minBonus = MIN_BODY_SEGMENTS - racer.baseBodySegments;
+  const maxBonus = MAX_BODY_SEGMENTS - racer.baseBodySegments;
   racer.lengthBonusSegments = clamp(racer.lengthBonusSegments + delta, minBonus, maxBonus);
+  const after = getCurrentBodySegments(racer);
+
+  if (after < before) {
+    racer.exhaustionSteps = Math.min(EXHAUSTION_LIMIT, (racer.exhaustionSteps || 0) + 1);
+    if (racer.exhaustionSteps >= EXHAUSTION_LIMIT) {
+      eliminateRacerFromExhaustion(racer, source);
+    }
+  } else if (after > before && source === "APPLE") {
+    racer.exhaustionSteps = 0;
+  }
+
+  return after !== before;
+}
+
+function eliminateRacerFromExhaustion(racer, source = "STARVATION") {
+  if (racer.finished) {
+    return;
+  }
+  racer.finished = true;
+  racer.finishTimeMs = Infinity;
+  racer.speed = 0;
+  racer.effects = [];
+  racer.shieldCharges = 0;
+  racer.eliminationReason = source === "CACTUS" ? "DNF (истощение/кактус)" : "DNF (истощение)";
+  if (racer.isPlayer) {
+    showToast("Вы погибли от истощения (3/3 уменьшения).");
+  }
 }
 
 function applyPickup(race, racer, type, nowMs) {
@@ -808,8 +937,7 @@ function updateBodySegmentsForRace(race, nowMs) {
 
 function updateRacerBodySegments(racer, nowMs) {
   const cfg = racer.bodyConfig || { segments: 14, spacing: 8, waveAmp: 3.5, waveFreq: 1, waveSpeed: 4.2, taper: 0.6 };
-  const baseSegments = Math.max(8, racer.baseBodySegments || cfg.segments || 14);
-  const required = clamp(baseSegments + racer.lengthBonusSegments, 8, 56);
+  const required = getCurrentBodySegments(racer);
   const spacing = Math.max(5, cfg.spacing);
   const waveTime = nowMs * 0.001 * cfg.waveSpeed + racer.bodyWaveSeed;
   const segments = [];
@@ -872,9 +1000,10 @@ function stepRacer(race, racer, control, nowMs, dt) {
 
   const modifiers = getRacerModifiers(racer);
   const offroadMul = racer.surface === "offroad" ? racer.stats.offroadPenalty * OFFROAD_EXTRA_SLOWDOWN : 1;
+  const lowBodyMul = getCurrentBodySegments(racer) < CRITICAL_SEGMENTS_THRESHOLD ? CRITICAL_SEGMENTS_SLOWDOWN : 1;
 
-  const maxSpeed = racer.stats.maxSpeed * offroadMul * modifiers.speedMul * racer.profile.speedFactor;
-  const accel = racer.stats.accel * offroadMul * modifiers.accelMul;
+  const maxSpeed = racer.stats.maxSpeed * offroadMul * modifiers.speedMul * racer.profile.speedFactor * lowBodyMul;
+  const accel = racer.stats.accel * offroadMul * modifiers.accelMul * lowBodyMul;
   const drag = racer.stats.drag;
   const brakeForce = 460;
 
@@ -929,8 +1058,8 @@ function getRacerModifiers(racer) {
 }
 
 function getBodyInfluence(racer) {
-  const base = Math.max(8, racer.baseBodySegments || racer.bodyConfig?.segments || 14);
-  const current = clamp(base + racer.lengthBonusSegments, 8, 56);
+  const base = Math.max(START_BODY_SEGMENTS, racer.baseBodySegments || START_BODY_SEGMENTS);
+  const current = getCurrentBodySegments(racer);
   const ratio = (current - base) / base;
   const beneficialScale = 1 + Math.max(0, ratio) * 0.9;
   const harmfulMitigation = clamp(Math.max(0, -ratio) * 0.95, 0, 0.8);
@@ -983,6 +1112,10 @@ function buildNpcControl(race, racer) {
   if (racer.surface === "offroad") {
     throttle = Math.min(throttle, 0.7);
   }
+  if (racer.speed < 12) {
+    throttle = Math.max(throttle, 0.92);
+    brake = 0;
+  }
 
   return {
     throttle,
@@ -992,6 +1125,10 @@ function buildNpcControl(race, racer) {
 }
 
 function findNpcAppleTarget(race, racer, racerProjection) {
+  const bodySegments = getCurrentBodySegments(racer);
+  if (bodySegments >= racer.baseBodySegments + 2) {
+    return null;
+  }
   let best = null;
   for (const item of race.bodyItems) {
     if (!item.active || item.type !== "APPLE") {
@@ -999,14 +1136,14 @@ function findNpcAppleTarget(race, racer, racerProjection) {
     }
     const itemProjection = projectOnTrack(race.track, item.x, item.y);
     const forwardDelta = forwardTrackDelta(racerProjection.tNorm, itemProjection.tNorm);
-    if (forwardDelta <= 0.0001 || forwardDelta > 0.22) {
+    if (forwardDelta <= 0.0001 || forwardDelta > 0.18) {
       continue;
     }
     const dist = Math.hypot(item.x - racer.x, item.y - racer.y);
-    if (dist > 280) {
+    if (dist > 235) {
       continue;
     }
-    const score = forwardDelta * 0.8 + dist / 900;
+    const score = forwardDelta * 0.75 + dist / 850;
     if (!best || score < best.score) {
       best = { item, score, dist };
     }
@@ -1019,11 +1156,62 @@ function blendNpcTarget(trackTarget, appleTarget, racer) {
     return trackTarget;
   }
   const appleDist = Math.hypot(appleTarget.x - racer.x, appleTarget.y - racer.y);
-  const appleWeight = clamp(1 - appleDist / 300, 0.18, 0.72);
+  const appleWeight = clamp(1 - appleDist / 300, 0.1, 0.44);
   return {
     x: lerp(trackTarget.x, appleTarget.x, appleWeight),
     y: lerp(trackTarget.y, appleTarget.y, appleWeight),
   };
+}
+
+function applyBodyCrossingRules(race, racer, nowMs) {
+  if (racer.finished) {
+    return;
+  }
+
+  const headRadius = 10;
+  for (const other of race.racers) {
+    if (other.id === racer.id || other.finished || !other.bodySegments?.length) {
+      continue;
+    }
+
+    const tail = other.bodySegments[other.bodySegments.length - 1];
+    if (
+      racer.typeId === "trickster" &&
+      tail &&
+      nowMs >= (racer.tailBiteCooldownUntilMs || 0) &&
+      sqrDistance(racer.x, racer.y, tail.x, tail.y) <= (headRadius + tail.radius + 2) ** 2
+    ) {
+      const bitten = applyBodySegmentDelta(other, -1, nowMs, "BITE");
+      if (bitten) {
+        racer.tailBiteCooldownUntilMs = nowMs + 900;
+      }
+    }
+
+    for (const segment of other.bodySegments) {
+      const limit = headRadius + segment.radius;
+      const dx = racer.x - segment.x;
+      const dy = racer.y - segment.y;
+      const distSq = dx * dx + dy * dy;
+      if (distSq > limit * limit) {
+        continue;
+      }
+
+      if (racer.typeId === "speedster") {
+        const dist = Math.sqrt(Math.max(0.0001, distSq));
+        const nx = dx / dist;
+        const ny = dy / dist;
+        const push = limit + SPEEDSTER_BODY_BLOCK_PUSH;
+        racer.x = segment.x + nx * push;
+        racer.y = segment.y + ny * push;
+        racer.speed *= 0.55;
+      } else if (racer.typeId === CROSS_ACCEL_SNAKE_ID) {
+        racer.speed = Math.min(racer.speed * 1.08, racer.stats.maxSpeed * 1.18);
+      } else {
+        racer.speed *= BODY_CROSS_SLOWDOWN_MUL;
+      }
+      break;
+    }
+  }
 }
 
 function readPlayerControl() {
@@ -1064,22 +1252,26 @@ function resolveRacerCollisions(race, nowMs) {
       b.x += nx * overlap * 0.5;
       b.y += ny * overlap * 0.5;
 
+      const aIsBully = a.typeId === "bully";
+      const bIsBully = b.typeId === "bully";
+      if (aIsBully && !bIsBully) {
+        b.x += nx * BULLY_PUSH_DISTANCE;
+        b.y += ny * BULLY_PUSH_DISTANCE;
+      } else if (bIsBully && !aIsBully) {
+        a.x -= nx * BULLY_PUSH_DISTANCE;
+        a.y -= ny * BULLY_PUSH_DISTANCE;
+      }
+
       if (nowMs < a.impactUntilMs || nowMs < b.impactUntilMs) {
         continue;
       }
       a.impactUntilMs = nowMs + 220;
       b.impactUntilMs = nowMs + 220;
-      if (a.shieldCharges > 0) {
-        a.shieldCharges -= 1;
-        removeEffect(a, "SHIELD");
-      } else {
-        a.speed *= 0.72;
+      if (!aIsBully) {
+        applyCollisionPenalty(a);
       }
-      if (b.shieldCharges > 0) {
-        b.shieldCharges -= 1;
-        removeEffect(b, "SHIELD");
-      } else {
-        b.speed *= 0.72;
+      if (!bIsBully) {
+        applyCollisionPenalty(b);
       }
     }
   }
@@ -1091,6 +1283,15 @@ function resolveRacerCollisions(race, nowMs) {
       racer.history[0].heading = racer.heading;
     }
   }
+}
+
+function applyCollisionPenalty(racer) {
+  if (racer.shieldCharges > 0) {
+    racer.shieldCharges -= 1;
+    removeEffect(racer, "SHIELD");
+    return;
+  }
+  racer.speed *= 0.72;
 }
 
 function updateCheckpointProgress(race, racer, nowMs) {
@@ -1121,11 +1322,14 @@ function updateCheckpointProgress(race, racer, nowMs) {
 }
 
 function computeStandings(race) {
-  const finished = race.racers.filter((racer) => racer.finished).sort((a, b) => a.finishTimeMs - b.finishTimeMs);
+  const finished = race.racers
+    .filter((racer) => racer.finished && Number.isFinite(racer.finishTimeMs))
+    .sort((a, b) => a.finishTimeMs - b.finishTimeMs);
   const active = race.racers
     .filter((racer) => !racer.finished)
     .sort((a, b) => b.progressScore - a.progressScore);
-  return [...finished, ...active];
+  const dnf = race.racers.filter((racer) => racer.finished && !Number.isFinite(racer.finishTimeMs));
+  return [...finished, ...active, ...dnf];
 }
 
 function updateHud(race, nowMs) {
@@ -1146,18 +1350,25 @@ function updateHud(race, nowMs) {
   const rank = standings.findIndex((racer) => racer.id === focus.id) + 1;
   ui.position.textContent = `P${Math.max(1, rank)}/${TOTAL_RACERS} (${focus.name})`;
   const bodySegments = getBodyInfluence(focus).currentSegments;
-  ui.effect.textContent = `${readActiveEffectLabel(focus)} | тело: ${bodySegments}`;
+  ui.effect.textContent = `${readActiveEffectLabel(focus)} | тело: ${bodySegments} | истощение: ${focus.exhaustionSteps || 0}/${EXHAUSTION_LIMIT}`;
 
   ui.standings.innerHTML = "";
   standings.forEach((racer) => {
     const li = document.createElement("li");
-    const tail = racer.finished ? (Number.isFinite(racer.finishTimeMs) ? formatMs(racer.finishTimeMs) : "DNF") : "running";
+    const tail = racer.finished
+      ? Number.isFinite(racer.finishTimeMs)
+        ? formatMs(racer.finishTimeMs)
+        : racer.eliminationReason || "DNF"
+      : "running";
     li.textContent = `${racer.name} - ${tail}`;
     ui.standings.appendChild(li);
   });
 }
 
 function readActiveEffectLabel(racer) {
+  if (racer.finished && racer.eliminationReason) {
+    return racer.eliminationReason;
+  }
   if (racer.shieldCharges > 0) {
     return `Щит x${racer.shieldCharges}`;
   }
