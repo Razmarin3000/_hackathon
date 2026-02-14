@@ -20,21 +20,25 @@ const BODY_ITEM_RESPAWN_MS = 3600;
 const START_BODY_SEGMENTS = 8;
 const MIN_BODY_SEGMENTS = 1;
 const MAX_BODY_SEGMENTS = 56;
-const STARVATION_DECAY_INTERVAL_MS = 6000;
+const STARVATION_DECAY_INTERVAL_MS = 12000;
 const STARVATION_DECAY_SEGMENTS = 1;
 const EXHAUSTION_LIMIT = 3;
 const CRITICAL_SEGMENTS_THRESHOLD = 4;
-const CRITICAL_SEGMENTS_SLOWDOWN = 0.32;
+const CRITICAL_SEGMENTS_SLOWDOWN = 0.55;
 const BODY_ITEM_MIN_SEPARATION = 64;
 const BODY_ITEM_TO_CHECKPOINT_MIN_DIST = 62;
 const BODY_ITEM_TO_PICKUP_MIN_DIST = 40;
 const CROSS_ACCEL_SNAKE_ID = "handler";
-const BODY_CROSS_SLOWDOWN_MUL = 0.78;
+const BODY_CROSS_SLOWDOWN_MUL = 0.9;
 const SPEEDSTER_BODY_BLOCK_PUSH = 8;
 const BULLY_PUSH_DISTANCE = 8;
 const SEGMENT_RENDER_SCALE = 1.5;
 const RESTART_DEBOUNCE_MS = 320;
 const BODY_CROSSING_START_GRACE_MS = 1200;
+const BODY_CROSSING_EFFECT_COOLDOWN_MS = 260;
+const ALWAYS_MOVE_SNAKE_IDS = new Set(["speedster", "handler"]);
+const ALWAYS_MOVE_MIN_SPEED = 34;
+const ALWAYS_MOVE_OFFROAD_FACTOR = 0.72;
 
 const BODY_ITEMS = {
   APPLE: { color: "#ff5f6a", deltaSegments: 1 },
@@ -529,6 +533,7 @@ function createRaceState(trackDef, selectedSnake, debugMode) {
       eliminationReason: null,
       nextHungerTickMs: 0,
       tailBiteCooldownUntilMs: 0,
+      nextBodyCrossEffectAtMs: 0,
     };
     initializeRacerBodyHistory(racer);
     racers.push(racer);
@@ -871,7 +876,7 @@ function applyBodySegmentDelta(racer, delta, nowMs, source = "UNKNOWN") {
   racer.lengthBonusSegments = clamp(racer.lengthBonusSegments + delta, minBonus, maxBonus);
   const after = getCurrentBodySegments(racer);
 
-  if (after < before) {
+  if (after < before && source === "STARVATION") {
     racer.exhaustionSteps = Math.min(EXHAUSTION_LIMIT, (racer.exhaustionSteps || 0) + 1);
     if (racer.exhaustionSteps >= EXHAUSTION_LIMIT) {
       eliminateRacerFromExhaustion(racer, source);
@@ -1011,7 +1016,7 @@ function stepRacer(race, racer, control, nowMs, dt) {
 
   const modifiers = getRacerModifiers(racer);
   const offroadMul = racer.surface === "offroad" ? racer.stats.offroadPenalty * OFFROAD_EXTRA_SLOWDOWN : 1;
-  const lowBodyMul = getCurrentBodySegments(racer) < CRITICAL_SEGMENTS_THRESHOLD ? CRITICAL_SEGMENTS_SLOWDOWN : 1;
+  const lowBodyMul = getLowBodySpeedFactor(racer);
 
   const maxSpeed = racer.stats.maxSpeed * offroadMul * modifiers.speedMul * racer.profile.speedFactor * lowBodyMul;
   const accel = racer.stats.accel * offroadMul * modifiers.accelMul * lowBodyMul;
@@ -1028,6 +1033,7 @@ function stepRacer(race, racer, control, nowMs, dt) {
 
   racer.speed += (accelTerm - dragTerm - brakeTerm) * dt;
   racer.speed = clamp(racer.speed, 0, maxSpeed * 1.06);
+  ensureAlwaysMoveSpeed(racer, lowBodyMul);
 
   const speedRatio = clamp(maxSpeed > 0 ? racer.speed / maxSpeed : 0, 0, 1);
   const turnRate = racer.stats.turnRate * modifiers.turnMul * (1 - speedRatio * 0.35);
@@ -1045,6 +1051,23 @@ function stepRacer(race, racer, control, nowMs, dt) {
   if (racer.history.length > MAX_HISTORY_POINTS) {
     racer.history.length = MAX_HISTORY_POINTS;
   }
+}
+
+function shouldNeverStop(racer) {
+  return !racer.isPlayer && ALWAYS_MOVE_SNAKE_IDS.has(racer.typeId);
+}
+
+function getLowBodySpeedFactor(racer) {
+  return getCurrentBodySegments(racer) < CRITICAL_SEGMENTS_THRESHOLD ? CRITICAL_SEGMENTS_SLOWDOWN : 1;
+}
+
+function ensureAlwaysMoveSpeed(racer, lowBodyMul = getLowBodySpeedFactor(racer)) {
+  if (!shouldNeverStop(racer)) {
+    return;
+  }
+  const baseFloor = ALWAYS_MOVE_MIN_SPEED * lowBodyMul;
+  const floor = racer.surface === "offroad" ? baseFloor * ALWAYS_MOVE_OFFROAD_FACTOR : baseFloor;
+  racer.speed = Math.max(racer.speed, floor);
 }
 
 function getRacerModifiers(racer) {
@@ -1099,6 +1122,7 @@ function resetRacerToCheckpoint(race, racer) {
   racer.y = cp.y + ny * 20;
   racer.heading = Math.atan2(ny, nx);
   racer.speed = Math.min(racer.speed, racer.stats.maxSpeed * 0.28);
+  ensureAlwaysMoveSpeed(racer);
   racer.timePenaltyMs += OUTSIDE_PENALTY_MS;
   racer.trail.length = 0;
   initializeRacerBodyHistory(racer);
@@ -1126,6 +1150,13 @@ function buildNpcControl(race, racer) {
   if (racer.speed < 12) {
     throttle = Math.max(throttle, 0.92);
     brake = 0;
+  }
+  if (shouldNeverStop(racer)) {
+    throttle = Math.max(throttle, 0.96);
+    brake = 0;
+    if (racer.speed < ALWAYS_MOVE_MIN_SPEED * 0.7) {
+      throttle = 1;
+    }
   }
 
   return {
@@ -1217,11 +1248,23 @@ function applyBodyCrossingRules(race, racer, nowMs) {
         const push = limit + SPEEDSTER_BODY_BLOCK_PUSH;
         racer.x = segment.x + nx * push;
         racer.y = segment.y + ny * push;
-        racer.speed *= 0.55;
+        if (nowMs >= (racer.nextBodyCrossEffectAtMs || 0)) {
+          racer.speed *= 0.9;
+          racer.nextBodyCrossEffectAtMs = nowMs + BODY_CROSSING_EFFECT_COOLDOWN_MS;
+        }
+        ensureAlwaysMoveSpeed(racer);
       } else if (racer.typeId === CROSS_ACCEL_SNAKE_ID) {
-        racer.speed = Math.min(racer.speed * 1.08, racer.stats.maxSpeed * 1.18);
+        if (nowMs >= (racer.nextBodyCrossEffectAtMs || 0)) {
+          racer.speed = Math.min(racer.speed * 1.08, racer.stats.maxSpeed * 1.18);
+          racer.nextBodyCrossEffectAtMs = nowMs + BODY_CROSSING_EFFECT_COOLDOWN_MS;
+        }
+        ensureAlwaysMoveSpeed(racer);
       } else {
-        racer.speed *= BODY_CROSS_SLOWDOWN_MUL;
+        if (nowMs >= (racer.nextBodyCrossEffectAtMs || 0)) {
+          racer.speed *= BODY_CROSS_SLOWDOWN_MUL;
+          racer.nextBodyCrossEffectAtMs = nowMs + BODY_CROSSING_EFFECT_COOLDOWN_MS;
+        }
+        ensureAlwaysMoveSpeed(racer);
       }
       break;
     }
@@ -1305,7 +1348,8 @@ function applyCollisionPenalty(racer) {
     removeEffect(racer, "SHIELD");
     return;
   }
-  racer.speed *= 0.72;
+  racer.speed *= shouldNeverStop(racer) ? 0.9 : 0.72;
+  ensureAlwaysMoveSpeed(racer);
 }
 
 function updateCheckpointProgress(race, racer, nowMs) {
