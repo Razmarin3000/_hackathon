@@ -6,6 +6,7 @@ services:
     container_name: snake-web
     ports:
       - "8080:80"
+      - "5500:80"
     depends_on:
       - match-server
     restart: unless-stopped

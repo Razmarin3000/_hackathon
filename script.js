@@ -20,7 +20,7 @@ const BODY_ITEM_RESPAWN_MS = 3600;
 const START_BODY_SEGMENTS = 8;
 const MIN_BODY_SEGMENTS = 1;
 const MAX_BODY_SEGMENTS = 56;
-const STARVATION_DECAY_INTERVAL_MS = 3000;
+const STARVATION_DECAY_INTERVAL_MS = 6000;
 const STARVATION_DECAY_SEGMENTS = 1;
 const EXHAUSTION_LIMIT = 3;
 const CRITICAL_SEGMENTS_THRESHOLD = 4;
@@ -32,6 +32,9 @@ const CROSS_ACCEL_SNAKE_ID = "handler";
 const BODY_CROSS_SLOWDOWN_MUL = 0.78;
 const SPEEDSTER_BODY_BLOCK_PUSH = 8;
 const BULLY_PUSH_DISTANCE = 8;
+const SEGMENT_RENDER_SCALE = 1.5;
+const RESTART_DEBOUNCE_MS = 320;
+const BODY_CROSSING_START_GRACE_MS = 1200;
 
 const BODY_ITEMS = {
   APPLE: { color: "#ff5f6a", deltaSegments: 1 },
@@ -204,6 +207,7 @@ const state = {
   lastResults: [],
   keyMap: new Set(),
   toastTimeout: null,
+  lastRestartAtMs: 0,
   phaserGame: null,
   raceScene: null,
 };
@@ -367,6 +371,10 @@ function onKeyDown(event) {
   }
   state.keyMap.add(event.code);
   if (event.code === "KeyR" && state.currentScreen === "race" && state.selectedTrackId) {
+    const now = performance.now();
+    if (now - state.lastRestartAtMs < RESTART_DEBOUNCE_MS) {
+      return;
+    }
     startRace(state.selectedTrackId);
   }
 }
@@ -460,6 +468,7 @@ function startRace(trackId) {
   if (!trackDef) {
     return;
   }
+  state.lastRestartAtMs = performance.now();
   const debugMode = isDebugMode();
   const selectedSnake = SNAKES.find((item) => item.id === state.selectedSnakeId) || SNAKES[0];
   state.race = createRaceState(trackDef, selectedSnake, debugMode);
@@ -538,6 +547,7 @@ function createRaceState(trackDef, selectedSnake, debugMode) {
     createdAtMs: performance.now(),
     countdownStartMs: performance.now(),
     raceStartMs: 0,
+    bodyCrossingGraceUntilMs: 0,
     finishedAtMs: 0,
     overlayUntilMs: 0,
     focusRacerId: racers[0].id,
@@ -652,6 +662,7 @@ function updateRace(race, nowMs, dt) {
     if (remain <= 0) {
       race.phase = "running";
       race.raceStartMs = nowMs;
+      race.bodyCrossingGraceUntilMs = nowMs + BODY_CROSSING_START_GRACE_MS;
       race.overlayUntilMs = nowMs + 700;
       for (const racer of race.racers) {
         racer.nextHungerTickMs = nowMs + STARVATION_DECAY_INTERVAL_MS;
@@ -1167,6 +1178,9 @@ function applyBodyCrossingRules(race, racer, nowMs) {
   if (racer.finished) {
     return;
   }
+  if (nowMs < (race.bodyCrossingGraceUntilMs || 0)) {
+    return;
+  }
 
   const headRadius = 10;
   for (const other of race.racers) {
@@ -1651,7 +1665,7 @@ function syncRacerSegmentSprites(scene, racer, visible) {
     sprite.setVisible(visible);
     sprite.setPosition(segment.x, segment.y);
     sprite.setRotation(segment.heading);
-    const size = Math.max(4, segment.radius * 2.25);
+    const size = Math.max(4, segment.radius * 2.25 * SEGMENT_RENDER_SCALE);
     sprite.setDisplaySize(size, size);
     sprite.setAlpha(segment.alpha);
   }
@@ -1669,7 +1683,7 @@ function drawBodySegments(g, racer) {
   for (let i = racer.bodySegments.length - 1; i >= 0; i -= 1) {
     const segment = racer.bodySegments[i];
     g.fillStyle(color, segment.alpha);
-    g.fillCircle(segment.x, segment.y, segment.radius);
+    g.fillCircle(segment.x, segment.y, segment.radius * SEGMENT_RENDER_SCALE);
   }
 }
 
