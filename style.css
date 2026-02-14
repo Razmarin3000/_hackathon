@@ -168,14 +168,17 @@ body {
 
 .race-layout {
   display: grid;
-  grid-template-columns: minmax(300px, 1fr) 260px;
+  grid-template-columns: auto 260px;
+  justify-content: center;
+  align-items: start;
   gap: 12px;
 }
 
 #race-stage {
-  width: 100%;
-  max-width: 980px;
-  aspect-ratio: 980/620;
+  width: min(80vw, calc(80vh * 1.5806));
+  height: min(80vh, calc(80vw / 1.5806));
+  min-width: 320px;
+  min-height: 220px;
   border-radius: 14px;
   border: 1px solid rgba(255, 255, 255, 0.26);
   background: #081122;
@@ -185,7 +188,7 @@ body {
 #race-stage canvas {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
 }
 
 .hud-panel {
@@ -293,6 +296,13 @@ body {
 @media (max-width: 990px) {
   .race-layout {
     grid-template-columns: 1fr;
+  }
+
+  #race-stage {
+    width: 92vw;
+    height: calc(92vw / 1.5806);
+    max-height: 72vh;
+    margin: 0 auto;
   }
 
   .hud-panel {

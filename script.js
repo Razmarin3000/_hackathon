@@ -9,6 +9,15 @@ const RACE_TIMEOUT_MS = 120000;
 const OUTSIDE_PENALTY_MS = 1400;
 const PICKUP_RESPAWN_MS = 8000;
 const STORAGE_PREFIX = "snake_drift_best_";
+const OFFROAD_EXTRA_SLOWDOWN = 0.84;
+const MAX_HISTORY_POINTS = 320;
+const BODY_ITEM_COUNT = 12;
+const BODY_ITEM_RESPAWN_MS = 3600;
+
+const BODY_ITEMS = {
+  APPLE: { color: "#ff5f6a", deltaSegments: 2 },
+  CACTUS: { color: "#4fd17b", deltaSegments: -2 },
+};
 
 const SNAKES = [
   {
@@ -17,6 +26,7 @@ const SNAKES = [
     flavor: "Максималка выше всех, но тяжелее повернуть",
     color: "#58f4ff",
     stats: { maxSpeed: 238, accel: 330, drag: 1.3, turnRate: 2.52, offroadPenalty: 0.63, mass: 1.0 },
+    body: { segments: 18, spacing: 7.6, waveAmp: 4.8, waveFreq: 0.9, waveSpeed: 5.2, taper: 0.62 },
   },
   {
     id: "handler",
@@ -24,6 +34,7 @@ const SNAKES = [
     flavor: "Лучший контроль в поворотах",
     color: "#9fff77",
     stats: { maxSpeed: 214, accel: 318, drag: 1.25, turnRate: 3.0, offroadPenalty: 0.67, mass: 1.0 },
+    body: { segments: 16, spacing: 8.4, waveAmp: 3.2, waveFreq: 1.15, waveSpeed: 4.1, taper: 0.56 },
   },
   {
     id: "bully",
@@ -31,6 +42,7 @@ const SNAKES = [
     flavor: "Тяжелый корпус, сильнее толчки",
     color: "#ff8c7c",
     stats: { maxSpeed: 206, accel: 292, drag: 1.18, turnRate: 2.3, offroadPenalty: 0.71, mass: 1.35 },
+    body: { segments: 22, spacing: 8.8, waveAmp: 2.6, waveFreq: 0.72, waveSpeed: 3.1, taper: 0.72 },
   },
   {
     id: "trickster",
@@ -38,6 +50,7 @@ const SNAKES = [
     flavor: "Почти не теряет темп вне дороги",
     color: "#d6a7ff",
     stats: { maxSpeed: 222, accel: 305, drag: 1.22, turnRate: 2.72, offroadPenalty: 0.82, mass: 0.95 },
+    body: { segments: 15, spacing: 7.1, waveAmp: 5.3, waveFreq: 1.32, waveSpeed: 6.0, taper: 0.52 },
   },
 ];
 
@@ -251,6 +264,11 @@ function wireUi() {
 
   window.addEventListener("keydown", onKeyDown, { passive: false });
   window.addEventListener("keyup", onKeyUp);
+  window.addEventListener("resize", () => {
+    if (state.phaserGame) {
+      state.phaserGame.scale.refresh();
+    }
+  });
 }
 
 function onKeyDown(event) {
@@ -380,6 +398,9 @@ function createRaceState(trackDef, selectedSnake) {
       typeId: snake.id,
       color: snake.color,
       stats: snake.stats,
+      bodyConfig: snake.body,
+      baseBodySegments: snake.body.segments,
+      lengthBonusSegments: 0,
       profile,
       isPlayer: !DEBUG_NPC_ONLY && i === 0,
       x: spawn.x + normal.x * offset,
@@ -397,9 +418,13 @@ function createRaceState(trackDef, selectedSnake) {
       timePenaltyMs: 0,
       progressScore: 0,
       trail: [],
+      history: [],
+      bodySegments: [],
+      bodyWaveSeed: Math.random() * TAU,
       lastProjection: null,
       impactUntilMs: 0,
     };
+    initializeRacerBodyHistory(racer);
     racers.push(racer);
   }
 
@@ -408,6 +433,7 @@ function createRaceState(trackDef, selectedSnake) {
     track,
     racers,
     pickups: createPickups(track),
+    bodyItems: createBodyItems(track),
     phase: "countdown",
     createdAtMs: performance.now(),
     countdownStartMs: performance.now(),
@@ -438,6 +464,50 @@ function createPickups(track) {
   });
 }
 
+function createBodyItems(track) {
+  const items = [];
+  for (let i = 0; i < BODY_ITEM_COUNT; i += 1) {
+    const item = {
+      id: `body_item_${i + 1}`,
+      type: Math.random() < 0.58 ? "APPLE" : "CACTUS",
+      x: 0,
+      y: 0,
+      radius: 11,
+      active: true,
+      respawnAtMs: 0,
+    };
+    randomizeBodyItemPosition(item, track);
+    items.push(item);
+  }
+  return items;
+}
+
+function randomizeBodyItemPosition(item, track) {
+  const sample = sampleTrack(track, Math.random());
+  const side = Math.random() < 0.5 ? -1 : 1;
+  const lateral = side * (Math.random() * track.roadWidth * 0.45);
+  const normal = { x: -sample.tangent.y, y: sample.tangent.x };
+  item.x = sample.x + normal.x * lateral;
+  item.y = sample.y + normal.y * lateral;
+  if (Math.random() < 0.35) {
+    item.type = item.type === "APPLE" ? "CACTUS" : "APPLE";
+  }
+}
+
+function initializeRacerBodyHistory(racer) {
+  racer.history.length = 0;
+  const backX = -Math.cos(racer.heading);
+  const backY = -Math.sin(racer.heading);
+  for (let i = 0; i < 90; i += 1) {
+    racer.history.push({
+      x: racer.x + backX * i * 2.2,
+      y: racer.y + backY * i * 2.2,
+      heading: racer.heading,
+    });
+  }
+  racer.bodySegments.length = 0;
+}
+
 function updateRace(race, nowMs, dt) {
   if (race.phase === "countdown") {
     const remain = Math.max(0, 3000 - (nowMs - race.countdownStartMs));
@@ -451,11 +521,13 @@ function updateRace(race, nowMs, dt) {
       ui.overlay.textContent = String(Math.ceil(remain / 1000));
       ui.overlay.classList.add("visible");
     }
+    updateBodySegmentsForRace(race, nowMs);
     updateHud(race, nowMs);
     return;
   }
 
   if (race.phase === "finished") {
+    updateBodySegmentsForRace(race, nowMs);
     if (nowMs > race.overlayUntilMs) {
       ui.overlay.classList.remove("visible");
       if (!race.resultsPushed) {
@@ -473,6 +545,7 @@ function updateRace(race, nowMs, dt) {
   }
 
   updatePickups(race, nowMs);
+  updateBodyItems(race, nowMs);
 
   for (const racer of race.racers) {
     if (racer.finished) {
@@ -482,9 +555,11 @@ function updateRace(race, nowMs, dt) {
     stepRacer(race, racer, control, nowMs, dt);
     updateCheckpointProgress(race, racer, nowMs);
     checkPickupCollection(race, racer, nowMs);
+    checkBodyItemCollection(race, racer, nowMs);
   }
 
   resolveRacerCollisions(race, nowMs);
+  updateBodySegmentsForRace(race, nowMs);
   race.standings = computeStandings(race);
 
   const elapsedMs = nowMs - race.raceStartMs;
@@ -559,6 +634,15 @@ function updatePickups(race, nowMs) {
   }
 }
 
+function updateBodyItems(race, nowMs) {
+  for (const item of race.bodyItems) {
+    if (!item.active && nowMs >= item.respawnAtMs) {
+      item.active = true;
+      randomizeBodyItemPosition(item, race.track);
+    }
+  }
+}
+
 function checkPickupCollection(race, racer, nowMs) {
   for (const pickup of race.pickups) {
     if (!pickup.active) {
@@ -572,6 +656,28 @@ function checkPickupCollection(race, racer, nowMs) {
     pickup.respawnAtMs = nowMs + PICKUP_RESPAWN_MS;
     applyPickup(race, racer, pickup.type, nowMs);
   }
+}
+
+function checkBodyItemCollection(race, racer, nowMs) {
+  for (const item of race.bodyItems) {
+    if (!item.active) {
+      continue;
+    }
+    const distSq = sqrDistance(racer.x, racer.y, item.x, item.y);
+    if (distSq > (item.radius + 11) ** 2) {
+      continue;
+    }
+    item.active = false;
+    item.respawnAtMs = nowMs + BODY_ITEM_RESPAWN_MS;
+    applyBodyItem(racer, item.type);
+  }
+}
+
+function applyBodyItem(racer, itemType) {
+  const delta = BODY_ITEMS[itemType]?.deltaSegments ?? 0;
+  const minBonus = -Math.floor(racer.baseBodySegments * 0.45);
+  const maxBonus = Math.floor(racer.baseBodySegments * 1.2);
+  racer.lengthBonusSegments = clamp(racer.lengthBonusSegments + delta, minBonus, maxBonus);
 }
 
 function applyPickup(race, racer, type, nowMs) {
@@ -616,6 +722,64 @@ function removeEffect(racer, type) {
   racer.effects = racer.effects.filter((effect) => effect.type !== type);
 }
 
+function updateBodySegmentsForRace(race, nowMs) {
+  for (const racer of race.racers) {
+    updateRacerBodySegments(racer, nowMs);
+  }
+}
+
+function updateRacerBodySegments(racer, nowMs) {
+  const cfg = racer.bodyConfig || { segments: 14, spacing: 8, waveAmp: 3.5, waveFreq: 1, waveSpeed: 4.2, taper: 0.6 };
+  const baseSegments = Math.max(8, racer.baseBodySegments || cfg.segments || 14);
+  const required = clamp(baseSegments + racer.lengthBonusSegments, 8, 56);
+  const spacing = Math.max(5, cfg.spacing);
+  const waveTime = nowMs * 0.001 * cfg.waveSpeed + racer.bodyWaveSeed;
+  const segments = [];
+  let targetDist = spacing;
+  let traversed = 0;
+
+  if (racer.history.length < 2) {
+    racer.bodySegments = segments;
+    return;
+  }
+
+  for (let i = 1; i < racer.history.length && segments.length < required; i += 1) {
+    const prev = racer.history[i - 1];
+    const curr = racer.history[i];
+    const dx = curr.x - prev.x;
+    const dy = curr.y - prev.y;
+    const pieceLen = Math.hypot(dx, dy);
+    if (pieceLen < 0.001) {
+      continue;
+    }
+
+    while (traversed + pieceLen >= targetDist && segments.length < required) {
+      const t = (targetDist - traversed) / pieceLen;
+      const baseX = lerp(prev.x, curr.x, t);
+      const baseY = lerp(prev.y, curr.y, t);
+      const heading = Math.atan2(prev.y - curr.y, prev.x - curr.x);
+      const idx = segments.length + 1;
+      const fade = 1 - idx / required;
+      const wave = Math.sin(waveTime + idx * cfg.waveFreq) * cfg.waveAmp * (0.45 + fade * 0.55);
+      const nx = -Math.sin(heading);
+      const ny = Math.cos(heading);
+      const radius = 2.6 + fade * 5.4 * cfg.taper;
+      segments.push({
+        x: baseX + nx * wave,
+        y: baseY + ny * wave,
+        heading,
+        radius,
+        alpha: 0.2 + fade * 0.68,
+      });
+      targetDist += spacing;
+    }
+
+    traversed += pieceLen;
+  }
+
+  racer.bodySegments = segments;
+}
+
 function stepRacer(race, racer, control, nowMs, dt) {
   racer.effects = racer.effects.filter((effect) => effect.untilMs > nowMs);
 
@@ -629,7 +793,7 @@ function stepRacer(race, racer, control, nowMs, dt) {
   }
 
   const modifiers = getRacerModifiers(racer);
-  const offroadMul = racer.surface === "offroad" ? racer.stats.offroadPenalty : 1;
+  const offroadMul = racer.surface === "offroad" ? racer.stats.offroadPenalty * OFFROAD_EXTRA_SLOWDOWN : 1;
 
   const maxSpeed = racer.stats.maxSpeed * offroadMul * modifiers.speedMul * racer.profile.speedFactor;
   const accel = racer.stats.accel * offroadMul * modifiers.accelMul;
@@ -658,26 +822,47 @@ function stepRacer(race, racer, control, nowMs, dt) {
   if (racer.trail.length > 22) {
     racer.trail.shift();
   }
+
+  racer.history.unshift({ x: racer.x, y: racer.y, heading: racer.heading });
+  if (racer.history.length > MAX_HISTORY_POINTS) {
+    racer.history.length = MAX_HISTORY_POINTS;
+  }
 }
 
 function getRacerModifiers(racer) {
   let speedMul = 1;
   let accelMul = 1;
   let turnMul = 1;
+  const bodyInfluence = getBodyInfluence(racer);
   for (const effect of racer.effects) {
     if (effect.type === "BOOST") {
-      speedMul *= 1.34;
-      accelMul *= 1.18;
+      speedMul *= 1 + (1.34 - 1) * bodyInfluence.beneficialScale;
+      accelMul *= 1 + (1.18 - 1) * bodyInfluence.beneficialScale;
     } else if (effect.type === "OIL") {
-      turnMul *= 0.64;
-      accelMul *= 0.82;
+      turnMul *= applyHarmfulMitigation(0.64, bodyInfluence.harmfulMitigation);
+      accelMul *= applyHarmfulMitigation(0.82, bodyInfluence.harmfulMitigation);
     } else if (effect.type === "BOMB_SLOW") {
-      speedMul *= 0.7;
-      accelMul *= 0.72;
-      turnMul *= 0.86;
+      speedMul *= applyHarmfulMitigation(0.7, bodyInfluence.harmfulMitigation);
+      accelMul *= applyHarmfulMitigation(0.72, bodyInfluence.harmfulMitigation);
+      turnMul *= applyHarmfulMitigation(0.86, bodyInfluence.harmfulMitigation);
     }
   }
   return { speedMul, accelMul, turnMul };
+}
+
+function getBodyInfluence(racer) {
+  const base = Math.max(8, racer.baseBodySegments || racer.bodyConfig?.segments || 14);
+  const current = clamp(base + racer.lengthBonusSegments, 8, 56);
+  const ratio = (current - base) / base;
+  const beneficialScale = 1 + Math.max(0, ratio) * 0.9;
+  const harmfulMitigation = clamp(Math.max(0, -ratio) * 0.95, 0, 0.8);
+  return { beneficialScale, harmfulMitigation, currentSegments: current };
+}
+
+function applyHarmfulMitigation(baseMultiplier, harmfulMitigation) {
+  const penalty = 1 - baseMultiplier;
+  const mitigatedPenalty = penalty * (1 - harmfulMitigation);
+  return 1 - mitigatedPenalty;
 }
 
 function resetRacerToCheckpoint(race, racer) {
@@ -697,6 +882,8 @@ function resetRacerToCheckpoint(race, racer) {
   racer.heading = Math.atan2(ny, nx);
   racer.speed = Math.min(racer.speed, racer.stats.maxSpeed * 0.28);
   racer.timePenaltyMs += OUTSIDE_PENALTY_MS;
+  racer.trail.length = 0;
+  initializeRacerBodyHistory(racer);
 }
 
 function buildNpcControl(race, racer) {
@@ -781,6 +968,14 @@ function resolveRacerCollisions(race, nowMs) {
       }
     }
   }
+
+  for (const racer of race.racers) {
+    if (racer.history && racer.history.length) {
+      racer.history[0].x = racer.x;
+      racer.history[0].y = racer.y;
+      racer.history[0].heading = racer.heading;
+    }
+  }
 }
 
 function updateCheckpointProgress(race, racer, nowMs) {
@@ -835,7 +1030,8 @@ function updateHud(race, nowMs) {
 
   const rank = standings.findIndex((racer) => racer.id === focus.id) + 1;
   ui.position.textContent = `P${Math.max(1, rank)}/${TOTAL_RACERS} (${focus.name})`;
-  ui.effect.textContent = readActiveEffectLabel(focus);
+  const bodySegments = getBodyInfluence(focus).currentSegments;
+  ui.effect.textContent = `${readActiveEffectLabel(focus)} | тело: ${bodySegments}`;
 
   ui.standings.innerHTML = "";
   standings.forEach((racer) => {
@@ -848,14 +1044,23 @@ function updateHud(race, nowMs) {
 
 function readActiveEffectLabel(racer) {
   if (racer.shieldCharges > 0) {
-    return `SHIELD x${racer.shieldCharges}`;
+    return `Щит x${racer.shieldCharges}`;
   }
   if (!racer.effects.length) {
-    return "none";
+    return "нет";
   }
   const top = racer.effects.reduce((acc, item) => (item.untilMs > acc.untilMs ? item : acc), racer.effects[0]);
   if (top.type === "BOMB_SLOW") {
-    return "BOMB slow";
+    return "Бомба: замедление";
+  }
+  if (top.type === "BOOST") {
+    return "Ускорение";
+  }
+  if (top.type === "OIL") {
+    return "Масло";
+  }
+  if (top.type === "SHIELD") {
+    return "Щит";
   }
   return top.type;
 }
@@ -865,6 +1070,7 @@ function renderRace(scene, race, nowMs) {
   drawBackground(g);
   drawTrack(g, race.track);
   drawCheckpoints(g, race.track);
+  drawBodyItems(g, race.bodyItems);
   drawPickups(g, race.pickups);
   drawRacers(g, race.racers);
   syncRacerLabels(scene, race.racers, true);
@@ -954,6 +1160,43 @@ function drawCheckpoints(g, track) {
   }
 }
 
+function drawBodyItems(g, bodyItems) {
+  for (const item of bodyItems) {
+    if (!item.active) {
+      continue;
+    }
+    if (item.type === "APPLE") {
+      drawApple(g, item.x, item.y, item.radius);
+    } else {
+      drawCactus(g, item.x, item.y, item.radius);
+    }
+  }
+}
+
+function drawApple(g, x, y, radius) {
+  g.fillStyle(hexToInt(BODY_ITEMS.APPLE.color), 0.95);
+  g.fillCircle(x, y, radius * 0.9);
+  g.fillStyle(0x8d2e35, 0.34);
+  g.fillCircle(x + radius * 0.28, y - radius * 0.1, radius * 0.28);
+  g.lineStyle(2, 0x6b4a2d, 1);
+  g.lineBetween(x, y - radius, x + 2, y - radius - 7);
+  g.fillStyle(0x67d275, 0.95);
+  g.fillEllipse(x + 6, y - radius - 6, 8, 5);
+}
+
+function drawCactus(g, x, y, radius) {
+  const color = hexToInt(BODY_ITEMS.CACTUS.color);
+  const h = radius * 1.8;
+  const arm = radius * 0.9;
+  g.fillStyle(color, 0.95);
+  g.fillRoundedRect(x - radius * 0.35, y - h * 0.5, radius * 0.7, h, 3);
+  g.fillRoundedRect(x - arm, y - h * 0.2, arm * 0.65, radius * 0.5, 3);
+  g.fillRoundedRect(x + radius * 0.35, y - h * 0.06, arm * 0.65, radius * 0.5, 3);
+  g.lineStyle(1, 0x2f874f, 0.95);
+  g.lineBetween(x - radius * 0.12, y - h * 0.45, x - radius * 0.12, y + h * 0.43);
+  g.lineBetween(x + radius * 0.12, y - h * 0.45, x + radius * 0.12, y + h * 0.43);
+}
+
 function drawPickups(g, pickups) {
   for (const pickup of pickups) {
     if (!pickup.active) {
@@ -976,11 +1219,24 @@ function drawPickups(g, pickups) {
 
 function drawRacers(g, racers) {
   racers.forEach((racer) => {
+    drawBodySegments(g, racer);
     drawTrail(g, racer);
   });
   racers.forEach((racer) => {
     drawRacerBody(g, racer);
   });
+}
+
+function drawBodySegments(g, racer) {
+  if (!racer.bodySegments || !racer.bodySegments.length) {
+    return;
+  }
+  const color = hexToInt(racer.color);
+  for (let i = racer.bodySegments.length - 1; i >= 0; i -= 1) {
+    const segment = racer.bodySegments[i];
+    g.fillStyle(color, segment.alpha);
+    g.fillCircle(segment.x, segment.y, segment.radius);
+  }
 }
 
 function drawTrail(g, racer) {
@@ -992,7 +1248,7 @@ function drawTrail(g, racer) {
     const point = racer.trail[i];
     const alpha = i / racer.trail.length;
     const radius = 3 + alpha * 4;
-    g.fillStyle(color, 0.09 + alpha * 0.25);
+    g.fillStyle(color, 0.05 + alpha * 0.12);
     g.fillCircle(point.x, point.y, radius);
   }
 }
