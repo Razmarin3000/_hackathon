@@ -66,13 +66,17 @@ const ALWAYS_MOVE_MIN_SPEED = 42;
 const ALWAYS_MOVE_OFFROAD_FACTOR = 0.72;
 const SPEEDSTER_BLOCK_EXTRA_TURN = 0.34;
 const SPEEDSTER_BLOCK_NUDGE = 4;
+const SPEEDSTER_BLOCK_MAX_SHIFT = 5.2;
+const SPEEDSTER_BLOCK_FORWARD_STEP = 4.8;
 const STALL_CHECK_WINDOW_MS = 780;
 const STALL_UNSTUCK_COOLDOWN_MS = 520;
 const STALL_MOVEMENT_EPSILON_SQ = 144;
 const STALL_PROGRESS_EPSILON = 0.0022;
 const STALL_NO_PROGRESS_WINDOW_MS = 1350;
 const STALL_UNSTUCK_LOOKAHEAD = 0.02;
-const STALL_UNSTUCK_NUDGE = 14;
+const STALL_RECOVERY_STEER_GAIN = 7.2;
+const STALL_HARD_RECOVERY_STEER_GAIN = 10.4;
+const STALL_OUTSIDE_RECOVERY_STEER_GAIN = 5.8;
 const STALL_UNSTUCK_GHOST_MS = 720;
 const STALL_HARD_UNSTUCK_LOOKAHEAD = 0.036;
 const STALL_HARD_UNSTUCK_GHOST_MS = 1100;
@@ -85,7 +89,7 @@ const OUTSIDE_MIN_CRAWL_SPEED = 12;
 const FINISHED_COAST_SPEED_FACTOR = 0.2;
 const FINISHED_COAST_STEER_GAIN = 2.1;
 const FINISHED_COAST_LOOKAHEAD = 0.008;
-const DNF_LABEL = "Сход";
+const NO_TIME_LABEL = "--:--.---";
 const VENOM_PROJECTILE_RADIUS = 4.5;
 const VENOM_PROJECTILE_SPEED = 360;
 const VENOM_PROJECTILE_HIT_RADIUS = 13;
@@ -93,6 +97,12 @@ const VENOM_PROJECTILE_MAX_LIFE_MS = 1800;
 const VENOM_SLOW_BASE_DURATION_MS = 1750;
 const RACE_COUNTDOWN_TOTAL_MS = 3000;
 const RACE_COUNTDOWN_SECONDS = 3;
+const COUNTDOWN_BURST_ANIM_CLASS = "countdown-burst";
+const COUNTDOWN_COLORS = {
+  3: "#63d8ff",
+  2: "#ffd56d",
+  1: "#ff7d64",
+};
 const TITLE_RACE_DURATION_STATS_KEY = "snake_race_duration_stats_v1";
 const TITLE_CRAWL_DURATION_EXTRA_FACTOR = 1.12;
 const TITLE_CRAWL_MIN_DURATION_MS = 42000;
@@ -100,7 +110,7 @@ const TITLE_CRAWL_MAX_DURATION_MS = 132000;
 const TITLE_CRAWL_EMA_ALPHA = 0.24;
 const TITLE_CRAWL_PACE_FACTOR = 0.27;
 const TITLE_CRAWL_SIDE_PADDING = 24;
-const TITLE_CRAWL_SLOWDOWN_FACTOR = 10;
+const TITLE_CRAWL_SLOWDOWN_FACTOR = 4;
 const MATCH_SERVER_PORT = 2567;
 const TITLE_REMOTE_STATS_PATH = "/local-stats/race-duration";
 const TITLE_REMOTE_STATS_RETRY_MS = 20000;
@@ -459,7 +469,8 @@ function startSnakeTitleWave(title, letterSpans) {
   const measure = () => {
     const header = title.closest(".app-header");
     const availableWidth = header ? header.clientWidth : window.innerWidth;
-    const stageWidth = Math.max(320, Math.min(800, availableWidth - 16));
+    const raceStageWidth = state.currentScreen === "race" ? ui.raceStage?.clientWidth || 0 : 0;
+    const stageWidth = raceStageWidth > 320 ? raceStageWidth : Math.max(320, Math.min(800, availableWidth - 16));
     title.style.setProperty("--wave-stage-width", `${stageWidth}px`);
 
     const letterWidths = letterSpans.map((span) => getSpanWidth(span));
@@ -477,7 +488,7 @@ function startSnakeTitleWave(title, letterSpans) {
     if (inRaceScreen) {
       const crawlDurationMs = getTitleCrawlDurationMs() * TITLE_CRAWL_SLOWDOWN_FACTOR;
       const progress = ((crawlElapsedMs % crawlDurationMs) + crawlDurationMs) % crawlDurationMs / crawlDurationMs;
-      const startX = -totalWidth - TITLE_CRAWL_SIDE_PADDING;
+      const startX = 0;
       const endX = stageWidth + TITLE_CRAWL_SIDE_PADDING;
       currentBaseX = lerp(startX, endX, progress);
     }
@@ -714,7 +725,10 @@ function updateRaceDurationStats(race) {
   if (!race?.racers?.length) {
     return;
   }
-  const finishedTimes = race.racers.map((racer) => racer.finishTimeMs).filter((ms) => Number.isFinite(ms) && ms > 0);
+  const finishedTimes = race.racers
+    .filter((racer) => racer.completedLap)
+    .map((racer) => racer.finishTimeMs)
+    .filter((ms) => Number.isFinite(ms) && ms > 0);
   if (!finishedTimes.length) {
     return;
   }
@@ -782,11 +796,15 @@ function initPhaser() {
     create() {
       this.graphics = this.add.graphics();
       this.infoText = this.add
-        .text(12, 12, "", {
+        .text(CANVAS_WIDTH * 0.5, CANVAS_HEIGHT - 12, "", {
           fontFamily: "\"Exo 2\", sans-serif",
-          fontSize: "13px",
-          color: "#dbe9ff",
+          fontSize: "12px",
+          color: "#d8e7ff",
+          align: "center",
+          stroke: "#07111f",
+          strokeThickness: 2,
         })
+        .setOrigin(0.5, 1)
         .setDepth(30);
 
       for (const snake of SNAKES) {
@@ -1115,7 +1133,8 @@ function createRaceState(trackDef, selectedSnake, debugMode, startMs = performan
       checkpointsPassed: 0,
       readyToFinish: false,
       finished: false,
-      finishTimeMs: Infinity,
+      finishTimeMs: NaN,
+      completedLap: false,
       timePenaltyMs: 0,
       progressScore: 0,
       trail: [],
@@ -1151,6 +1170,7 @@ function createRaceState(trackDef, selectedSnake, debugMode, startMs = performan
     phase: "countdown",
     createdAtMs: clockNowMs,
     countdownStartMs: clockNowMs,
+    countdownLastSecond: null,
     raceStartMs: 0,
     bodyCrossingGraceUntilMs: 0,
     finishedAtMs: 0,
@@ -1282,12 +1302,35 @@ function initializeRacerBodyHistory(racer) {
   racer.bodySegments.length = 0;
 }
 
+function showOverlayMessage(text, mode = "", color = null) {
+  ui.overlay.textContent = text;
+  ui.overlay.classList.remove("countdown", COUNTDOWN_BURST_ANIM_CLASS, "overlay-go", "overlay-finish");
+  if (mode) {
+    ui.overlay.classList.add(mode);
+  }
+  if (color) {
+    ui.overlay.style.setProperty("--overlay-color", color);
+  } else {
+    ui.overlay.style.removeProperty("--overlay-color");
+  }
+  ui.overlay.classList.add("visible");
+}
+
+function triggerCountdownBurst(value) {
+  const color = COUNTDOWN_COLORS[value] || "#f0f5ff";
+  showOverlayMessage(String(value), "countdown", color);
+  ui.overlay.classList.remove(COUNTDOWN_BURST_ANIM_CLASS);
+  // Force reflow so CSS animation restarts on every digit.
+  void ui.overlay.offsetWidth;
+  ui.overlay.classList.add(COUNTDOWN_BURST_ANIM_CLASS);
+}
+
 // -----------------------------
 // Race Loop and Simulation
 // -----------------------------
 function updateRace(race, nowMs, dt) {
   if (race.phase === "countdown") {
-    const remain = Math.max(0, 3000 - (nowMs - race.countdownStartMs));
+    const remain = Math.max(0, RACE_COUNTDOWN_TOTAL_MS - (nowMs - race.countdownStartMs));
     if (remain <= 0) {
       race.phase = "running";
       race.raceStartMs = nowMs;
@@ -1302,11 +1345,15 @@ function updateRace(race, nowMs, dt) {
         racer.stallWatch = null;
         ensureAlwaysMoveSpeed(racer);
       }
-      ui.overlay.textContent = "GO";
-      ui.overlay.classList.add("visible");
+      showOverlayMessage("GO", "overlay-go", "#8eff84");
     } else {
-      ui.overlay.textContent = String(Math.ceil(remain / 1000));
-      ui.overlay.classList.add("visible");
+      const sec = clamp(Math.ceil(remain / 1000), 1, RACE_COUNTDOWN_SECONDS);
+      if (race.countdownLastSecond !== sec) {
+        race.countdownLastSecond = sec;
+        triggerCountdownBurst(sec);
+      } else {
+        ui.overlay.classList.add("visible");
+      }
     }
     updateBodySegmentsForRace(race, nowMs);
     updateHud(race, nowMs);
@@ -1316,7 +1363,8 @@ function updateRace(race, nowMs, dt) {
   if (race.phase === "finished") {
     updateBodySegmentsForRace(race, nowMs);
     if (nowMs > race.overlayUntilMs) {
-      ui.overlay.classList.remove("visible");
+      ui.overlay.classList.remove("visible", "overlay-go", "overlay-finish", "countdown", COUNTDOWN_BURST_ANIM_CLASS);
+      ui.overlay.style.removeProperty("--overlay-color");
       if (!race.resultsPushed) {
         race.resultsPushed = true;
         finalizeResults(race);
@@ -1328,7 +1376,8 @@ function updateRace(race, nowMs, dt) {
   if (nowMs <= race.overlayUntilMs) {
     ui.overlay.classList.add("visible");
   } else {
-    ui.overlay.classList.remove("visible");
+    ui.overlay.classList.remove("visible", "overlay-go", "overlay-finish", "countdown", COUNTDOWN_BURST_ANIM_CLASS);
+    ui.overlay.style.removeProperty("--overlay-color");
   }
 
   updatePickups(race, nowMs);
@@ -1346,7 +1395,7 @@ function updateRace(race, nowMs, dt) {
     const control = racer.isPlayer ? readPlayerControl() : buildNpcControl(race, racer, nowMs);
     stepRacer(race, racer, control, nowMs, dt);
     applyBodyCrossingRules(race, racer, nowMs);
-    preventRacerStall(race, racer, nowMs);
+    preventRacerStall(race, racer, nowMs, dt);
     maybeShootVenom(race, racer, control, nowMs);
     if (racer.finished) {
       continue;
@@ -1366,7 +1415,8 @@ function updateRace(race, nowMs, dt) {
     for (const racer of race.racers) {
       if (!racer.finished) {
         racer.finished = true;
-        racer.finishTimeMs = Infinity;
+        racer.completedLap = false;
+        racer.finishTimeMs = Math.max(0, elapsedMs + racer.timePenaltyMs);
       }
     }
     finishRace(race, nowMs);
@@ -1414,8 +1464,7 @@ function finishRace(race, nowMs) {
   race.phase = "finished";
   race.finishedAtMs = nowMs;
   race.overlayUntilMs = nowMs + 1300;
-  ui.overlay.textContent = "FINISH";
-  ui.overlay.classList.add("visible");
+  showOverlayMessage("FINISH", "overlay-finish", "#ffb17f");
 }
 
 function finalizeResults(race) {
@@ -1426,6 +1475,8 @@ function finalizeResults(race) {
     name: racer.name,
     snake: racer.typeId,
     timeMs: racer.finishTimeMs,
+    completedLap: Boolean(racer.completedLap),
+    progressLabel: formatRacerProgressLabel(race, racer),
   }));
   persistBestTimeFromRace(race);
   updateRaceDurationStats(race);
@@ -1437,7 +1488,7 @@ function finalizeResults(race) {
 
 function persistBestTimeFromRace(race) {
   const focus = race.racers.find((racer) => racer.id === race.focusRacerId);
-  if (!focus || !Number.isFinite(focus.finishTimeMs)) {
+  if (!focus || !focus.completedLap || !Number.isFinite(focus.finishTimeMs)) {
     return;
   }
   const prev = loadBestTime(race.trackDef.id);
@@ -1454,7 +1505,7 @@ function renderResultsTable() {
       <td>${row.rank}</td>
       <td>${row.name}</td>
       <td>${row.snake}</td>
-      <td>${Number.isFinite(row.timeMs) ? formatMs(row.timeMs) : DNF_LABEL}</td>
+      <td>${row.completedLap ? formatMs(row.timeMs) : row.progressLabel}</td>
     `;
     ui.resultsBody.appendChild(tr);
   }
@@ -2395,16 +2446,25 @@ function applyBodyCrossingRules(race, racer, nowMs) {
         const nx = dx / dist;
         const ny = dy / dist;
         const push = limit + Math.max(2, SPEEDSTER_BODY_BLOCK_PUSH * 0.5);
-        racer.x = segment.x + nx * push;
-        racer.y = segment.y + ny * push;
+        const desiredX = segment.x + nx * push;
+        const desiredY = segment.y + ny * push;
+        const shiftX = desiredX - racer.x;
+        const shiftY = desiredY - racer.y;
+        const shiftLen = Math.hypot(shiftX, shiftY);
+        if (shiftLen > 0.001) {
+          const shiftStep = Math.min(SPEEDSTER_BLOCK_MAX_SHIFT, shiftLen);
+          racer.x += (shiftX / shiftLen) * shiftStep;
+          racer.y += (shiftY / shiftLen) * shiftStep;
+        }
         const tangentSign = Math.sign(shortestAngle(racer.heading, segment.heading || racer.heading)) || 1;
         racer.heading = wrapAngle(racer.heading + SPEEDSTER_BLOCK_EXTRA_TURN * tangentSign);
         const projection = racer.lastProjection || projectOnTrack(race.track, racer.x, racer.y);
         const ahead = sampleTrack(race.track, mod1(projection.tNorm + 0.011));
         const forwardHeading = Math.atan2(ahead.y - racer.y, ahead.x - racer.x);
         racer.heading = wrapAngle(racer.heading + shortestAngle(racer.heading, forwardHeading) * 0.55);
-        racer.x += Math.cos(racer.heading) * (SPEEDSTER_BLOCK_NUDGE + 1.5);
-        racer.y += Math.sin(racer.heading) * (SPEEDSTER_BLOCK_NUDGE + 1.5);
+        const forwardStep = Math.min(SPEEDSTER_BLOCK_FORWARD_STEP, SPEEDSTER_BLOCK_NUDGE + 1.5);
+        racer.x += Math.cos(racer.heading) * forwardStep;
+        racer.y += Math.sin(racer.heading) * forwardStep;
         if (nowMs >= (racer.nextBodyCrossEffectAtMs || 0)) {
           racer.speed *= 0.96;
           racer.nextBodyCrossEffectAtMs = nowMs + BODY_CROSSING_EFFECT_COOLDOWN_MS;
@@ -2428,7 +2488,7 @@ function applyBodyCrossingRules(race, racer, nowMs) {
   }
 }
 
-function preventRacerStall(race, racer, nowMs) {
+function preventRacerStall(race, racer, nowMs, dt) {
   if (racer.finished || race.phase !== "running") {
     return;
   }
@@ -2436,6 +2496,7 @@ function preventRacerStall(race, racer, nowMs) {
   const projection = racer.lastProjection || projectOnTrack(race.track, racer.x, racer.y);
   racer.lastProjection = projection;
   ensureAlwaysMoveSpeed(racer);
+  const safeDt = Math.min(0.05, Math.max(0.001, Number.isFinite(dt) ? dt : 0.016));
 
   if (!racer.stallWatch) {
     racer.stallWatch = {
@@ -2487,12 +2548,20 @@ function preventRacerStall(race, racer, nowMs) {
     laneSign *= Math.floor(nowMs / STALL_NO_PROGRESS_WINDOW_MS) % 2 === 0 ? 1 : -1;
   }
   const lateral = Math.min(race.track.roadWidth * 0.16, 9) * laneSign;
-  racer.x = ahead.x + normal.x * lateral;
-  racer.y = ahead.y + normal.y * lateral;
-  racer.heading = Math.atan2(ahead.tangent.y, ahead.tangent.x);
-  const nudgeFactor = hardDeadlock ? 0.95 : 0.45;
-  racer.x += Math.cos(racer.heading) * (STALL_UNSTUCK_NUDGE * nudgeFactor);
-  racer.y += Math.sin(racer.heading) * (STALL_UNSTUCK_NUDGE * nudgeFactor);
+  const targetX = ahead.x + normal.x * lateral;
+  const targetY = ahead.y + normal.y * lateral;
+  const desiredHeading = Math.atan2(targetY - racer.y, targetX - racer.x);
+  const headingDelta = shortestAngle(racer.heading, desiredHeading);
+  const steerGain = hardDeadlock ? STALL_HARD_RECOVERY_STEER_GAIN : STALL_RECOVERY_STEER_GAIN;
+  racer.heading = wrapAngle(racer.heading + clamp(headingDelta, -1, 1) * steerGain * safeDt);
+
+  // If snake is deeply outside, bias steering back toward nearest track projection,
+  // but keep movement continuous (no coordinate snap).
+  if (projection.distance > race.track.outsideWidth * 0.98) {
+    const toTrackHeading = Math.atan2(projection.y - racer.y, projection.x - racer.x);
+    const toTrackDelta = shortestAngle(racer.heading, toTrackHeading);
+    racer.heading = wrapAngle(racer.heading + clamp(toTrackDelta, -1, 1) * STALL_OUTSIDE_RECOVERY_STEER_GAIN * safeDt);
+  }
 
   const forcedSpeed = shouldNeverStop(racer)
     ? Math.max(ALWAYS_MOVE_MIN_SPEED * (hardDeadlock ? 1.24 : 1.08), racer.stats.maxSpeed * (hardDeadlock ? 0.3 : 0.22))
@@ -2502,14 +2571,11 @@ function preventRacerStall(race, racer, nowMs) {
   racer.nextBodyCrossEffectAtMs = nowMs + ghostMs;
   racer.impactUntilMs = nowMs + ghostMs;
   racer.unstuckUntilMs = nowMs + ghostMs;
-  racer.trail.length = 0;
-  initializeRacerBodyHistory(racer);
 
   watch.x = racer.x;
   watch.y = racer.y;
-  watch.progressT = ahead.fraction;
+  watch.progressT = projection.tNorm;
   watch.lastMoveAtMs = nowMs;
-  watch.lastProgressAtMs = nowMs;
   watch.lastUnstuckAtMs = nowMs;
 }
 
@@ -2606,6 +2672,7 @@ function updateCheckpointProgress(race, racer, nowMs) {
 
   if (racer.readyToFinish && startDist <= race.track.checkpointRadius && nowMs - race.raceStartMs > 4500) {
     racer.finished = true;
+    racer.completedLap = true;
     racer.finishTimeMs = Math.max(0, nowMs - race.raceStartMs + racer.timePenaltyMs);
     racer.speed = Math.max(racer.speed, racer.stats.maxSpeed * FINISHED_COAST_SPEED_FACTOR);
     return;
@@ -2627,14 +2694,25 @@ function updateCheckpointProgress(race, racer, nowMs) {
 }
 
 function computeStandings(race) {
-  const finished = race.racers
-    .filter((racer) => racer.finished && Number.isFinite(racer.finishTimeMs))
-    .sort((a, b) => a.finishTimeMs - b.finishTimeMs);
-  const active = race.racers
-    .filter((racer) => !racer.finished)
-    .sort((a, b) => b.progressScore - a.progressScore);
-  const dnf = race.racers.filter((racer) => racer.finished && !Number.isFinite(racer.finishTimeMs));
-  return [...finished, ...active, ...dnf];
+  return [...race.racers].sort((a, b) => {
+    if (a.completedLap !== b.completedLap) {
+      return a.completedLap ? -1 : 1;
+    }
+    if (a.completedLap && b.completedLap) {
+      const timeA = Number.isFinite(a.finishTimeMs) ? a.finishTimeMs : Number.POSITIVE_INFINITY;
+      const timeB = Number.isFinite(b.finishTimeMs) ? b.finishTimeMs : Number.POSITIVE_INFINITY;
+      if (timeA !== timeB) {
+        return timeA - timeB;
+      }
+    }
+    if (a.progressScore !== b.progressScore) {
+      return b.progressScore - a.progressScore;
+    }
+    if (a.checkpointsPassed !== b.checkpointsPassed) {
+      return b.checkpointsPassed - a.checkpointsPassed;
+    }
+    return a.id.localeCompare(b.id);
+  });
 }
 
 function updateHud(race, nowMs) {
@@ -2647,7 +2725,7 @@ function updateHud(race, nowMs) {
   } else if (race.phase === "finished") {
     timerMs = focus.finishTimeMs;
   }
-  ui.timer.textContent = Number.isFinite(timerMs) ? formatMs(timerMs) : DNF_LABEL;
+  ui.timer.textContent = Number.isFinite(timerMs) ? formatMs(timerMs) : NO_TIME_LABEL;
 
   const kmh = Math.round(focus.speed * 1.92);
   ui.speed.textContent = `${kmh} km/h`;
@@ -2663,14 +2741,28 @@ function updateHud(race, nowMs) {
   ui.standings.innerHTML = "";
   standings.forEach((racer) => {
     const li = document.createElement("li");
-    const tail = racer.finished
-      ? Number.isFinite(racer.finishTimeMs)
-        ? formatMs(racer.finishTimeMs)
-        : racer.eliminationReason || DNF_LABEL
-      : "в гонке";
+    const tail = racer.finished ? formatRacerStandingsTail(race, racer) : "в гонке";
     li.textContent = `${racer.name} - ${tail}`;
     ui.standings.appendChild(li);
   });
+}
+
+function formatRacerProgressLabel(race, racer) {
+  const checkpointsDone = Math.max(0, racer.checkpointsPassed || 0);
+  const nextIndex = Number.isFinite(racer.nextCheckpointIndex) ? racer.nextCheckpointIndex : 0;
+  const nextCheckpoint = race?.track?.checkpoints?.[nextIndex];
+  if (!nextCheckpoint) {
+    return `CP ${checkpointsDone}`;
+  }
+  const distToNext = Math.hypot(nextCheckpoint.x - racer.x, nextCheckpoint.y - racer.y);
+  return `CP ${checkpointsDone} | next ${Math.round(distToNext)}px`;
+}
+
+function formatRacerStandingsTail(race, racer) {
+  if (racer.completedLap && Number.isFinite(racer.finishTimeMs)) {
+    return formatMs(racer.finishTimeMs);
+  }
+  return formatRacerProgressLabel(race, racer);
 }
 
 function readActiveEffectLabel(racer) {
@@ -3190,7 +3282,7 @@ function loadBestTime(trackId) {
 
 function formatMs(ms) {
   if (!Number.isFinite(ms)) {
-    return DNF_LABEL;
+    return NO_TIME_LABEL;
   }
   const clean = Math.max(0, Math.floor(ms));
   const minutes = Math.floor(clean / 60000);

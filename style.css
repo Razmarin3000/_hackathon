@@ -134,12 +134,24 @@ body {
 }
 
 body.race-screen-active .app-header {
-  margin-bottom: -28px;
+  margin-bottom: clamp(-24px, -2.2vw, -10px);
   z-index: 40;
+  pointer-events: none;
 }
 
 body.race-screen-active .app-header p {
-  opacity: 0.75;
+  opacity: 0;
+  max-height: 0;
+  overflow: hidden;
+}
+
+body.race-screen-active #screen-race {
+  margin-top: 0;
+}
+
+body.race-screen-active .app-header h1.title-snake-wave {
+  max-width: none;
+  transform: translateY(-4px) !important;
 }
 
 .screen {
@@ -427,16 +439,89 @@ body.race-screen-active .app-header p {
   display: none;
   align-items: center;
   justify-content: center;
-  background: rgba(7, 12, 24, 0.38);
+  background: rgba(7, 12, 24, 0.28);
   font-family: "Russo One", sans-serif;
   font-size: clamp(2.1rem, 5vw, 4rem);
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  color: var(--overlay-color, #edf3ff);
+  text-shadow:
+    0 0 10px rgba(214, 234, 255, 0.75),
+    0 6px 14px rgba(3, 8, 18, 0.55);
+  opacity: 0;
+  transform: scale(1);
   pointer-events: none;
 }
 
 .race-overlay.visible {
   display: flex;
+  opacity: 1;
+}
+
+.race-overlay.countdown {
+  font-size: clamp(5rem, 18vw, 18rem);
+  font-family: "Snake Regular", "Russo One", sans-serif;
+  letter-spacing: 0.02em;
+}
+
+.race-overlay.countdown.countdown-burst {
+  animation: countdown-burst 820ms cubic-bezier(0.13, 0.16, 0.19, 1) both;
+}
+
+.race-overlay.overlay-go {
+  font-size: clamp(3.2rem, 10vw, 9rem);
+  animation: overlay-pop 640ms ease-out both;
+}
+
+.race-overlay.overlay-finish {
+  font-size: clamp(2.6rem, 7.2vw, 5.6rem);
+  animation: overlay-pop 700ms ease-out both;
+}
+
+@keyframes countdown-burst {
+  0% {
+    opacity: 0;
+    transform: scale(0.08);
+  }
+  10% {
+    opacity: 1;
+    transform: scale(0.17);
+  }
+  28% {
+    opacity: 1;
+    transform: scale(0.5);
+  }
+  48% {
+    opacity: 0.98;
+    transform: scale(1.4);
+  }
+  68% {
+    opacity: 0.82;
+    transform: scale(3.6);
+  }
+  84% {
+    opacity: 0.45;
+    transform: scale(8.8);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(15);
+  }
+}
+
+@keyframes overlay-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  22% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .results-table {
