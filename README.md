@@ -274,3 +274,5 @@ npx serve . -l 5500
 
 - 2026-02: Refactor step-13: extracted body/effects/hunger/pickup logic from `src/game/simulation.js` into `src/game/simBodySystem.js`; kept the same simulation exports for compatibility.
 - 2026-02: Refactor step-14: extracted progress/standings logic into `src/game/simProgress.js`; `src/game/simulation.js` now focuses on movement, anti-stall and collisions.
+- 2026-02: Refactor step-15: split AI into focused modules - `src/game/aiSteering.js` (bot target/avoidance/control) and `src/game/venomSystem.js` (venom targeting/projectiles/hit effects); `src/game/ai.js` is now a thin facade.
+- 2026-02: Refactor step-16: split rendering into `src/game/renderWorld.js` (track/background/world objects) and `src/game/renderRacers.js` (snakes, sprites, labels); `src/game/render.js` now orchestrates these modules.

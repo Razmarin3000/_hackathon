@@ -58,13 +58,18 @@ Gameplay modules:
 - `src/game/simulation.js`: movement, anti-stall recovery, body-crossing rules, collisions.
 - `src/game/simBodySystem.js`: snake body, hunger, effects, pickups and speed-floor helpers.
 - `src/game/simProgress.js`: checkpoint progress and standings.
-- `src/game/ai.js`: bot steering/targeting + venom behavior.
+- `src/game/aiSteering.js`: bot pathing/targets/avoidance and NPC control output.
+- `src/game/venomSystem.js`: venom targeting, projectile lifecycle and hit effects.
+- `src/game/ai.js`: thin AI facade composing steering + venom systems.
 - `src/game/raceFlow.js`: countdown/race loop/finish/results orchestration.
 - `src/game/raceSetup.js`: race state creation + spawn generation/validation.
 
 UI/Scene modules:
 - `src/game/hud.js`: HUD labels/standings/effect text.
 - `src/game/coreUi.js`: overlay/countdown, toast, time formatting, render wrappers.
+- `src/game/renderWorld.js`: background, track, checkpoints, pickups/body-items, venom visuals.
+- `src/game/renderRacers.js`: racer body/trail rendering, snake sprites and labels sync.
+- `src/game/render.js`: thin render orchestrator (race vs idle screen).
 - `src/game/uiFlow.js`: screen navigation, cards, hotkeys, race start/restart.
 - `src/game/scene.js`: Phaser scene bootstrap + background keep-alive + track music.
 
@@ -74,3 +79,5 @@ Support modules:
 
 - 2026-02 step-13: src/game/simBodySystem.js owns snake body, hunger, effects, pickups and speed-floor helpers.
 - 2026-02 step-14: src/game/simProgress.js owns checkpoint progress and standings; src/game/simulation.js is now physics/collision focused.
+- 2026-02 step-15: AI split into src/game/aiSteering.js and src/game/venomSystem.js; src/game/ai.js became a composition facade.
+- 2026-02 step-16: render split into src/game/renderWorld.js and src/game/renderRacers.js; src/game/render.js now orchestrates them.
