@@ -16,6 +16,7 @@ import { createHudApi } from "./hud.js";
 import { createSceneApi } from "./scene.js";
 import { createUiFlowApi } from "./uiFlow.js";
 import { createCoreUiApi } from "./coreUi.js";
+import { createOnlineRoomClientApi } from "./onlineRoomClient.js";
 import {
   stepFinishedRacer,
   updatePickups,
@@ -67,6 +68,11 @@ export function bootstrapApp() {
     getCurrentBodySegments,
     formatMs,
   });
+  const {
+    startOnlineRace,
+    disconnectOnlineRace,
+    sendOnlineInput,
+  } = createOnlineRoomClientApi({ state });
   let syncRaceMusicRef = () => {};
   const {
     wireUi,
@@ -83,6 +89,9 @@ export function bootstrapApp() {
     isDebugMode,
     createRaceState,
     syncRaceMusic: (...args) => syncRaceMusicRef(...args),
+    startOnlineRace,
+    disconnectOnlineRace,
+    sendOnlineInput,
     showToast,
     loadBestTime,
     formatMs,

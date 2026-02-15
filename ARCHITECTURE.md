@@ -80,6 +80,7 @@ UI/сцена:
 - `src/game/renderRacers.js`: тела змей, спрайты, подписи.
 - `src/game/render.js`: оркестрация рендера гонки и idle.
 - `src/game/uiFlow.js`: экраны, карточки, хоткеи, запуск/рестарт/next-track.
+- `src/game/onlineRoomClient.js`: подключение к Colyseus-комнате, отправка `ready/input/ping`, прием `snapshot`.
 - `src/game/scene.js`: bootstrap Phaser-сцены, keep-alive в фоне, музыка трассы.
 
 Поддержка:
@@ -95,3 +96,4 @@ UI/сцена:
 - Шаг 17: симуляция разделена на `src/game/simMotion.js` и `src/game/simInteractions.js`, `src/game/simulation.js` стал фасадом.
 - Шаг 18: механики тела/эффектов разделены на `src/game/simBodyCore.js` и `src/game/simItemEffects.js`, `src/game/simBodySystem.js` стал фасадом.
 - Шаг 19: steering-часть ИИ разделена на `src/game/aiTargeting.js` и `src/game/aiAvoidance.js`, `src/game/aiSteering.js` теперь отвечает за финальный control output.
+- Шаг 20: запущен online MVP-flow подключения к комнате через `src/game/onlineRoomClient.js` и отображение authoritative `snapshot` в race-экране.

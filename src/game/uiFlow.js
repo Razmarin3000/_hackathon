@@ -8,16 +8,97 @@ export function createUiFlowApi({
   isDebugMode,
   createRaceState,
   syncRaceMusic,
+  startOnlineRace,
+  disconnectOnlineRace,
+  sendOnlineInput,
   showToast,
   loadBestTime,
   formatMs,
   RESTART_DEBOUNCE_MS,
 } = {}) {
+  const PLAYER_NAME_STORAGE_KEY = "polzunki_player_name_v1";
+  const PLAYER_NAME_MAX_LENGTH = 24;
+  const DEFAULT_PLAYER_NAME = "Player";
+
+  function normalizePlayerName(rawName) {
+    return String(rawName ?? "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, PLAYER_NAME_MAX_LENGTH);
+  }
+
+  function loadStoredPlayerName() {
+    try {
+      return localStorage.getItem(PLAYER_NAME_STORAGE_KEY) || "";
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function persistPlayerName(nextName) {
+    try {
+      localStorage.setItem(PLAYER_NAME_STORAGE_KEY, nextName);
+    } catch (error) {
+      // localStorage can be unavailable in private mode; keep in-memory value.
+    }
+  }
+
+  function getResolvedPlayerName() {
+    return normalizePlayerName(state.playerName) || DEFAULT_PLAYER_NAME;
+  }
+
+  function applyPlayerNameFromInput() {
+    if (!ui.playerNameInput) {
+      state.playerName = getResolvedPlayerName();
+      return;
+    }
+
+    const normalized = normalizePlayerName(ui.playerNameInput.value);
+    const resolved = normalized || DEFAULT_PLAYER_NAME;
+    state.playerName = resolved;
+    if (ui.playerNameInput.value !== normalized) {
+      ui.playerNameInput.value = normalized;
+    }
+    persistPlayerName(resolved);
+  }
+
+  function initPlayerNameUi() {
+    const normalizedStoredName = normalizePlayerName(loadStoredPlayerName());
+    state.playerName = normalizedStoredName || DEFAULT_PLAYER_NAME;
+
+    if (!ui.playerNameInput) {
+      return;
+    }
+
+    ui.playerNameInput.value = normalizedStoredName;
+    ui.playerNameInput.addEventListener("input", () => applyPlayerNameFromInput());
+    ui.playerNameInput.addEventListener("change", () => applyPlayerNameFromInput());
+    ui.playerNameInput.addEventListener("blur", () => applyPlayerNameFromInput());
+  }
+
   function wireUi() {
-    document.getElementById("btn-offline").addEventListener("click", () => showScreen("snake"));
-    document.getElementById("btn-online").addEventListener("click", () => showToast("РћРЅР»Р°Р№РЅ РјРѕРґСѓР»СЊ РІ СЃР»РµРґСѓСЋС‰РµРј С€Р°РіРµ (E3)."));
-    document.getElementById("btn-leaderboards").addEventListener("click", () => showToast("Authoritative leaderboard Р±СѓРґРµС‚ РґРѕР±Р°РІР»РµРЅ С‡РµСЂРµР· СЃРµСЂРІРµСЂ."));
-    document.getElementById("btn-settings").addEventListener("click", () => showToast("РќР°СЃС‚СЂРѕР№РєРё РїРѕСЏРІСЏС‚СЃСЏ РїРѕСЃР»Рµ СЃС‚Р°Р±РёР»РёР·Р°С†РёРё core-loop."));
+    initPlayerNameUi();
+
+    document.getElementById("btn-offline").addEventListener("click", () => {
+      state.playMode = "offline";
+      void disconnectOnlineRace?.();
+      showScreen("snake");
+      showToast("Офлайн-режим активирован.");
+    });
+
+    document.getElementById("btn-online").addEventListener("click", () => {
+      state.playMode = "online";
+      showScreen("snake");
+      showToast("Онлайн MVP: выбери змею и трассу, затем нажми Старт для подключения к комнате.");
+    });
+
+    document.getElementById("btn-leaderboards").addEventListener("click", () =>
+      showToast("Таблица лидеров будет подключена отдельным экраном в следующем шаге.")
+    );
+
+    document.getElementById("btn-settings").addEventListener("click", () =>
+      showToast("Настройки будут доработаны после стабилизации online-flow.")
+    );
 
     if (ui.modeClassic) {
       ui.modeClassic.addEventListener("click", () => setOfflineMode(OFFLINE_MODES.CLASSIC));
@@ -33,14 +114,15 @@ export function createUiFlowApi({
       if (!state.selectedTrackId) {
         return;
       }
-      startRace(state.selectedTrackId);
+      void startRace(state.selectedTrackId);
     });
 
     document.getElementById("results-retry").addEventListener("click", () => {
       if (state.selectedTrackId) {
-        startRace(state.selectedTrackId);
+        void startRace(state.selectedTrackId);
       }
     });
+
     document.getElementById("results-next").addEventListener("click", () => {
       if (!TRACK_DEFS.length) {
         return;
@@ -48,9 +130,11 @@ export function createUiFlowApi({
       const currentTrackId = state.lastFinishedTrackId || state.selectedTrackId || TRACK_DEFS[0].id;
       const nextTrack = getNextTrackDef(currentTrackId);
       state.selectedTrackId = nextTrack.id;
-      startRace(nextTrack.id);
+      void startRace(nextTrack.id);
     });
+
     document.getElementById("results-back").addEventListener("click", () => {
+      void disconnectOnlineRace?.();
       state.race = null;
       renderTrackCards();
       showScreen("main");
@@ -69,27 +153,32 @@ export function createUiFlowApi({
     if (state.currentScreen === "race" && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(event.code || event.key)) {
       event.preventDefault();
     }
+
     state.keyMap.add(event.code);
     const isRestartKey = event.code === "KeyR" || event.key === "r" || event.key === "R";
-    const restartTrackId = state.race?.trackDef?.id || state.selectedTrackId;
+    const restartTrackId = state.race?.trackDef?.id || state.selectedTrackId || state.online?.trackId;
+    pushOnlineInput();
+
     if (isRestartKey && state.currentScreen === "race" && restartTrackId) {
       event.preventDefault();
       const now = performance.now();
       if (now - state.lastRestartAtMs < RESTART_DEBOUNCE_MS) {
         return;
       }
-      startRace(restartTrackId);
+      void startRace(restartTrackId);
     }
   }
 
   function onKeyUp(event) {
     state.keyMap.delete(event.code);
+    pushOnlineInput();
   }
 
   function showScreen(name) {
     Object.entries(ui.screens).forEach(([id, node]) => node.classList.toggle("active", id === name));
     state.currentScreen = name;
     document.body.classList.toggle("race-screen-active", name === "race");
+
     if (name !== "race") {
       ui.overlay.classList.remove("visible");
     } else if (state.phaserGame) {
@@ -99,6 +188,7 @@ export function createUiFlowApi({
         }
       }, 0);
     }
+
     syncRaceMusic();
   }
 
@@ -123,6 +213,7 @@ export function createUiFlowApi({
         [...ui.snakeCards.children].forEach((node) => node.classList.remove("selected"));
         card.classList.add("selected");
       });
+
       if (!state.selectedSnakeId && snake.id === "handler") {
         state.selectedSnakeId = snake.id;
         card.classList.add("selected");
@@ -131,6 +222,7 @@ export function createUiFlowApi({
         card.classList.add("selected");
         ui.snakeNext.disabled = false;
       }
+
       ui.snakeCards.appendChild(card);
     }
   }
@@ -156,6 +248,7 @@ export function createUiFlowApi({
         [...ui.trackCards.children].forEach((node) => node.classList.remove("selected"));
         card.classList.add("selected");
       });
+
       if (!state.selectedTrackId && track.id === "canyon_loop") {
         state.selectedTrackId = track.id;
         card.classList.add("selected");
@@ -164,6 +257,7 @@ export function createUiFlowApi({
         card.classList.add("selected");
         ui.trackStart.disabled = false;
       }
+
       ui.trackCards.appendChild(card);
     }
   }
@@ -171,6 +265,25 @@ export function createUiFlowApi({
   function getTrackIndexById(trackId) {
     const idx = TRACK_DEFS.findIndex((track) => track.id === trackId);
     return idx >= 0 ? idx : 0;
+  }
+
+  function buildOnlineInputFromKeys() {
+    const left = state.keyMap.has("ArrowLeft") || state.keyMap.has("KeyA");
+    const right = state.keyMap.has("ArrowRight") || state.keyMap.has("KeyD");
+    const up = state.keyMap.has("ArrowUp") || state.keyMap.has("KeyW");
+    const down = state.keyMap.has("ArrowDown") || state.keyMap.has("KeyS");
+    return {
+      turn: (left ? -1 : 0) + (right ? 1 : 0),
+      throttle: up ? 1 : 0,
+      brake: down ? 1 : 0,
+    };
+  }
+
+  function pushOnlineInput() {
+    if (state.playMode !== "online" || state.currentScreen !== "race") {
+      return;
+    }
+    sendOnlineInput?.(buildOnlineInputFromKeys());
   }
 
   function getNextTrackDef(currentTrackId) {
@@ -182,25 +295,53 @@ export function createUiFlowApi({
     return next;
   }
 
-  function startRace(trackId) {
+  async function startRace(trackId) {
     const trackDef = TRACK_DEFS.find((item) => item.id === trackId);
     if (!trackDef) {
       return false;
     }
+
     state.lastRestartAtMs = performance.now();
     state.selectedTrackId = trackDef.id;
     state.lastFinishedTrackId = null;
     state.keyMap.clear();
+
+    if (state.playMode === "online") {
+      state.race = null;
+      showScreen("race");
+      syncRaceMusic();
+
+      const selectedSnake = SNAKES.find((item) => item.id === state.selectedSnakeId) || SNAKES[0];
+      const connectResult = await startOnlineRace?.({
+        trackId: trackDef.id,
+        playerName: getResolvedPlayerName() || `Player (${selectedSnake.name})`,
+      });
+
+      if (!connectResult?.ok) {
+        showScreen("track");
+        showToast(`Не удалось подключиться к онлайн-комнате: ${connectResult?.error || "unknown_error"}`);
+        return false;
+      }
+
+      showToast(`Онлайн: подключено к комнате ${connectResult.roomId || "-"}.`);
+      pushOnlineInput();
+      return true;
+    }
+
+    await disconnectOnlineRace?.();
+
     const debugMode = isDebugMode();
     const selectedSnake = SNAKES.find((item) => item.id === state.selectedSnakeId) || SNAKES[0];
     const sceneNowMs = Number.isFinite(state.raceScene?.time?.now) ? state.raceScene.time.now : performance.now();
     state.race = createRaceState(trackDef, selectedSnake, debugMode, sceneNowMs);
+
     showScreen("race");
     syncRaceMusic();
+
     if (debugMode) {
-      showToast("DEBUG: 4 Р±РѕС‚Р° РЅР° Р°РІС‚РѕРїРёР»РѕС‚Рµ. Р‘С‹СЃС‚СЂР°СЏ РѕС‚Р»Р°РґРєР° СЃРёРјСѓР»СЏС†РёРё.");
+      showToast("DEBUG: 4 бота на автопилоте.");
     } else {
-      showToast("РљР»Р°СЃСЃРёС‡РµСЃРєРёР№ РѕС„С„Р»Р°Р№РЅ: 1 РёРіСЂРѕРє + 3 Р±РѕС‚Р°.");
+      showToast("Классический офлайн: 1 игрок + 3 бота.");
     }
     return true;
   }

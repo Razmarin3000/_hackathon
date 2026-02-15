@@ -280,3 +280,7 @@ npx serve . -l 5500
 - 2026-02: Шаг рефакторинга 17: внутренности симуляции разделены на `src/game/simMotion.js` (движение/coasting) и `src/game/simInteractions.js` (пересечения тел, anti-stall, коллизии); `src/game/simulation.js` стал тонким re-export фасадом.
 - 2026-02: Шаг рефакторинга 18: внутренности тела/эффектов разделены на `src/game/simBodyCore.js` (сегменты/heading/speed-модификаторы) и `src/game/simItemEffects.js` (голод/пикапы/эффекты); `src/game/simBodySystem.js` стал тонким re-export фасадом.
 - 2026-02: Шаг рефакторинга 19: steering-часть NPC разделена на `src/game/aiTargeting.js` (притяжение к яблокам/выбор целей) и `src/game/aiAvoidance.js` (избегание опасностей/края); `src/game/aiSteering.js` теперь отвечает за финальный synthesis управления.
+- 2026-02: Онлайн MVP шаг-1: добавлен клиент комнаты `src/game/onlineRoomClient.js` (join/create `race`, `ready`, `input`, `ping`, обработка `snapshot`/`pong`/disconnect); кнопка `Играть онлайн` теперь включает online-flow выбора змеи/трассы и подключение к комнате.
+- 2026-02: Экран гонки в online-flow теперь показывает live snapshot комнаты (фаза, RTT, позиции игроков) даже без запуска локальной офлайн-симуляции; музыка трассы в гонке учитывает `state.online.trackId`.
+
+- 2026-02: В главном меню добавлено поле произвольного имени игрока для online-режима; имя сохраняется в localStorage браузера и автоматически подставляется при входе в комнату.

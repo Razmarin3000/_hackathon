@@ -70,6 +70,10 @@ export function createSceneApi({ ui, state, updateRace, renderRace, renderIdle }
         const dt = Math.min(0.033, Math.max(0.001, delta / 1000));
         const raceBeforeUpdate = state.race;
         if (!raceBeforeUpdate) {
+          if (state.currentScreen === "race" && state.online?.active) {
+            renderOnlineSnapshot(this, state.online, time, renderIdle);
+            return;
+          }
           renderIdle(this);
           return;
         }
@@ -141,7 +145,10 @@ export function createSceneApi({ ui, state, updateRace, renderRace, renderIdle }
     if (!scene || !scene.trackMusicMap || !scene.trackMusicMap.size) {
       return;
     }
-    const activeTrackId = state.currentScreen === "race" && state.race?.trackDef?.id ? state.race.trackDef.id : null;
+    const activeTrackId =
+      state.currentScreen === "race"
+        ? state.race?.trackDef?.id || state.online?.trackId || null
+        : null;
 
     scene.trackMusicMap.forEach((music, trackId) => {
       if (!music) {
@@ -170,4 +177,56 @@ export function createSceneApi({ ui, state, updateRace, renderRace, renderIdle }
     initPhaser,
     syncRaceMusic,
   };
+}
+
+function renderOnlineSnapshot(scene, onlineState, nowMs, renderIdle) {
+  renderIdle(scene);
+  const g = scene.graphics;
+  const snapshot = onlineState?.snapshot || null;
+  const status = onlineState?.status || "idle";
+
+  if (!snapshot) {
+    scene.infoText.setVisible(true);
+    scene.infoText.setText([
+      `Онлайн: ${status}`,
+      onlineState?.roomId ? `Комната: ${onlineState.roomId}` : "Подключение к комнате...",
+      Number.isFinite(onlineState?.latencyMs) ? `RTT: ${Math.round(onlineState.latencyMs)} ms` : "RTT: -",
+      `Время: ${Math.round(nowMs)} ms`,
+    ]);
+    return;
+  }
+
+  const players = Array.isArray(snapshot.players) ? snapshot.players : [];
+  const centerX = CANVAS_WIDTH * 0.5;
+  const centerY = CANVAS_HEIGHT * 0.5;
+  const scale = 0.28;
+  const maxDx = CANVAS_WIDTH * 0.44;
+  const maxDy = CANVAS_HEIGHT * 0.35;
+
+  for (const player of players) {
+    const px = centerX + Math.max(-maxDx, Math.min(maxDx, (Number(player.x) || 0) * scale));
+    const py = centerY + Math.max(-maxDy, Math.min(maxDy, (Number(player.y) || 0) * scale));
+    const isSelf = onlineState?.sessionId && player.sessionId === onlineState.sessionId;
+    const color = isSelf ? 0xffd56d : player.isBot ? 0x7ec5ff : 0x7bf1a6;
+    const radius = player.finished ? 5 : 8;
+    g.fillStyle(color, 0.95);
+    g.fillCircle(px, py, radius);
+    if (player.finished) {
+      g.lineStyle(1, 0xffffff, 0.8);
+      g.strokeCircle(px, py, radius + 2);
+    }
+  }
+
+  const topRows = players.slice(0, 4).map((player, idx) => {
+    const progress = Math.round(Number(player.progress) || 0);
+    return `${idx + 1}. ${player.displayName}: ${progress}м${player.finished ? " ✓" : ""}`;
+  });
+  const phase = snapshot.phase || status;
+  const latencyLine = Number.isFinite(onlineState?.latencyMs) ? `RTT: ${Math.round(onlineState.latencyMs)} ms` : "RTT: -";
+  scene.infoText.setVisible(true);
+  scene.infoText.setText([
+    `Онлайн комната: ${snapshot.roomId || onlineState?.roomId || "-"}`,
+    `Фаза: ${phase} | ${latencyLine}`,
+    ...topRows,
+  ]);
 }

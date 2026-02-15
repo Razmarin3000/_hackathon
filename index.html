@@ -19,6 +19,16 @@
 
     <section id="screen-main" class="screen active">
       <div class="panel menu-panel">
+        <label class="menu-field" for="player-name-input">
+          <span>Имя игрока (онлайн)</span>
+          <input
+            id="player-name-input"
+            type="text"
+            maxlength="24"
+            autocomplete="nickname"
+            placeholder="Введите имя"
+          >
+        </label>
         <button id="btn-offline" class="btn primary">Играть офлайн</button>
         <button id="btn-online" class="btn ghost">Играть онлайн (скоро)</button>
         <button id="btn-leaderboards" class="btn ghost">Таблица лидеров (скоро)</button>
