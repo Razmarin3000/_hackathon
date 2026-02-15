@@ -256,26 +256,26 @@ npx serve . -l 5500
 
 - Все новые игровые механики и заметные изменения фиксируются в этом `README.md` сразу после реализации.
 - План целевой модульной структуры фронтенда вынесен в `ARCHITECTURE.md`.
-- 2026-02: Removed DNF from race results. Final ranking now always exists and is based on race progress; unfinished racers show CP + distance-to-next-checkpoint metric.
+- 2026-02: Убран результат DNF/«сход». Итоговый рейтинг теперь формируется всегда по прогрессу, а незавершившие показываются через метрику `CP + расстояние до следующего чекпоинта`.
 - Расшифровка прогресса в результатах: `CP 5 | next 236px` означает, что змея прошла `5` чекпоинтов, и до следующего чекпоинта ей осталось `236` пикселей по прямой.
-- 2026-02: Anti-stall was switched to soft recovery without coordinate snaps: no direct x/y teleports, only steering + speed recovery + ghost window.
-- 2026-02: Frontend step-1 modularization done: shared constants moved to `src/game/config.js`, catalogs to `src/game/catalog.js`, and math helpers to `src/game/utils.js`.
-- 2026-02: Frontend step-2 modularization done: rendering moved to `src/game/render.js`, and track geometry/projection moved to `src/game/trackMath.js`.
-- 2026-02: Frontend step-3 modularization done: UI/global app state moved to `src/game/state.js`, race-duration/title-crawl stats moved to `src/game/raceDurationStats.js`, and title wave animation moved to `src/game/titleWave.js`.
-- 2026-02: Frontend step-4 modularization done: NPC autopilot + venom combat logic moved to `src/game/ai.js` and wired back into `script.js` via dependency-injected API.
-- 2026-02: Frontend step-5 modularization done: core race simulation (movement/effects/collisions/checkpoint progress helpers) moved to `src/game/simulation.js`; `script.js` keeps orchestration/UI flow.
-- 2026-02: Frontend step-6 modularization done: race flow orchestration (`updateRace`, countdown/finish transitions, results finalization, player controls) moved to `src/game/raceFlow.js` via `createRaceFlowApi`.
-- 2026-02: Frontend step-7 modularization done: race/session setup and object spawning moved to `src/game/raceSetup.js` (`createRaceState`, pickups/body-items generation, spawn validation, racer naming/history init).
-- 2026-02: Frontend step-8 modularization done: HUD rendering/labels moved to `src/game/hud.js` (`updateHud`, progress labels, active effect labels).
-- 2026-02: Frontend step-9 modularization done: Phaser scene/bootstrap logic moved to `src/game/scene.js` (`initPhaser`, background keep-alive policy, track music sync).
-- 2026-02: Frontend step-10 modularization done: UI flow moved to `src/game/uiFlow.js` (screen switching, key handling, snake/track cards, race start/restart/next-track wiring).
-- 2026-02: Frontend step-11 modularization done: remaining core UI helpers moved to `src/game/coreUi.js` (overlay/countdown helpers, race render wrappers, local best-time formatting, toast helper).
-- 2026-02: Frontend step-12 modularization done: composition/bootstrap moved to `src/game/app.js`; `script.js` is now a thin entry-point that only calls `bootstrapApp()`.
+- 2026-02: Anti-stall переведен на мягкое восстановление без coordinate snap: без прямых `x/y`-телепортов, только доворот + восстановление скорости + ghost-window.
+- 2026-02: Шаг фронтенд-модульности 1: общие константы вынесены в `src/game/config.js`, каталоги — в `src/game/catalog.js`, математика/утилиты — в `src/game/utils.js`.
+- 2026-02: Шаг фронтенд-модульности 2: рендер вынесен в `src/game/render.js`, геометрия/проекция трассы — в `src/game/trackMath.js`.
+- 2026-02: Шаг фронтенд-модульности 3: UI/глобальный state вынесены в `src/game/state.js`, статистика длительности заездов — в `src/game/raceDurationStats.js`, анимация заголовка — в `src/game/titleWave.js`.
+- 2026-02: Шаг фронтенд-модульности 4: автопилот ботов и ядовая боевая логика вынесены в `src/game/ai.js` с dependency-injected API.
+- 2026-02: Шаг фронтенд-модульности 5: базовая симуляция гонки (движение/эффекты/коллизии/прогресс) вынесена в `src/game/simulation.js`; в `script.js` осталась оркестрация/UI.
+- 2026-02: Шаг фронтенд-модульности 6: оркестрация гонки (`updateRace`, countdown/finish-переходы, финализация результатов, управление игроком) вынесена в `src/game/raceFlow.js` через `createRaceFlowApi`.
+- 2026-02: Шаг фронтенд-модульности 7: setup гонки и спавн объектов вынесены в `src/game/raceSetup.js` (`createRaceState`, генерация pickups/body-items, валидация спавна, инициализация имен/истории).
+- 2026-02: Шаг фронтенд-модульности 8: HUD-рендер и подписи вынесены в `src/game/hud.js` (`updateHud`, labels прогресса, labels активных эффектов).
+- 2026-02: Шаг фронтенд-модульности 9: логика Phaser-сцены/инициализации вынесена в `src/game/scene.js` (`initPhaser`, background keep-alive, синхронизация музыки трассы).
+- 2026-02: Шаг фронтенд-модульности 10: flow экранов вынесен в `src/game/uiFlow.js` (переключение экранов, клавиши, карточки змей/трасс, старт/рестарт/next-track).
+- 2026-02: Шаг фронтенд-модульности 11: оставшиеся core UI-хелперы вынесены в `src/game/coreUi.js` (overlay/countdown, обертки рендера, форматирование best-time, toast).
+- 2026-02: Шаг фронтенд-модульности 12: bootstrap/композиция перенесены в `src/game/app.js`; `script.js` стал тонкой точкой входа и только вызывает `bootstrapApp()`.
 
-- 2026-02: Refactor step-13: extracted body/effects/hunger/pickup logic from `src/game/simulation.js` into `src/game/simBodySystem.js`; kept the same simulation exports for compatibility.
-- 2026-02: Refactor step-14: extracted progress/standings logic into `src/game/simProgress.js`; `src/game/simulation.js` now focuses on movement, anti-stall and collisions.
-- 2026-02: Refactor step-15: split AI into focused modules - `src/game/aiSteering.js` (bot target/avoidance/control) and `src/game/venomSystem.js` (venom targeting/projectiles/hit effects); `src/game/ai.js` is now a thin facade.
-- 2026-02: Refactor step-16: split rendering into `src/game/renderWorld.js` (track/background/world objects) and `src/game/renderRacers.js` (snakes, sprites, labels); `src/game/render.js` now orchestrates these modules.
-- 2026-02: Refactor step-17: split race simulation internals into `src/game/simMotion.js` (movement/coasting step) and `src/game/simInteractions.js` (body crossing, anti-stall, collisions); `src/game/simulation.js` is now a thin re-export facade.
-- 2026-02: Refactor step-18: split body/effects internals into `src/game/simBodyCore.js` (segments/heading/speed modifiers) and `src/game/simItemEffects.js` (hunger, pickups, effects); `src/game/simBodySystem.js` is now a thin re-export facade.
-- 2026-02: Refactor step-19: split NPC steering internals into `src/game/aiTargeting.js` (apple attraction/targeting) and `src/game/aiAvoidance.js` (hazard/edge avoidance); `src/game/aiSteering.js` now focuses on final control synthesis.
+- 2026-02: Шаг рефакторинга 13: логика тела/эффектов/голода/пикапов вынесена из `src/game/simulation.js` в `src/game/simBodySystem.js`; совместимость API симуляции сохранена.
+- 2026-02: Шаг рефакторинга 14: логика прогресса/standings вынесена в `src/game/simProgress.js`; `src/game/simulation.js` сфокусирован на движении, anti-stall и коллизиях.
+- 2026-02: Шаг рефакторинга 15: ИИ разделен на `src/game/aiSteering.js` (цели/избегание/control) и `src/game/venomSystem.js` (яд/снаряды/попадания); `src/game/ai.js` стал тонким фасадом.
+- 2026-02: Шаг рефакторинга 16: рендер разделен на `src/game/renderWorld.js` (трасса/фон/объекты) и `src/game/renderRacers.js` (змеи/спрайты/подписи); `src/game/render.js` теперь оркестрирует эти модули.
+- 2026-02: Шаг рефакторинга 17: внутренности симуляции разделены на `src/game/simMotion.js` (движение/coasting) и `src/game/simInteractions.js` (пересечения тел, anti-stall, коллизии); `src/game/simulation.js` стал тонким re-export фасадом.
+- 2026-02: Шаг рефакторинга 18: внутренности тела/эффектов разделены на `src/game/simBodyCore.js` (сегменты/heading/speed-модификаторы) и `src/game/simItemEffects.js` (голод/пикапы/эффекты); `src/game/simBodySystem.js` стал тонким re-export фасадом.
+- 2026-02: Шаг рефакторинга 19: steering-часть NPC разделена на `src/game/aiTargeting.js` (притяжение к яблокам/выбор целей) и `src/game/aiAvoidance.js` (избегание опасностей/края); `src/game/aiSteering.js` теперь отвечает за финальный synthesis управления.
