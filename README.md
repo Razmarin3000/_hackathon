@@ -268,3 +268,4 @@ npx serve . -l 5500
 - 2026-02: Frontend step-7 modularization done: race/session setup and object spawning moved to `src/game/raceSetup.js` (`createRaceState`, pickups/body-items generation, spawn validation, racer naming/history init).
 - 2026-02: Frontend step-8 modularization done: HUD rendering/labels moved to `src/game/hud.js` (`updateHud`, progress labels, active effect labels).
 - 2026-02: Frontend step-9 modularization done: Phaser scene/bootstrap logic moved to `src/game/scene.js` (`initPhaser`, background keep-alive policy, track music sync).
+- 2026-02: Frontend step-10 modularization done: UI flow moved to `src/game/uiFlow.js` (screen switching, key handling, snake/track cards, race start/restart/next-track wiring).
